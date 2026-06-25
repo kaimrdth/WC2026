@@ -2710,7 +2710,7 @@ const CSS = `
 .wc-bracket-note{display:flex;align-items:flex-start;gap:.5rem;max-width:760px;margin:0 0 1rem;font-size:.74rem;line-height:1.5;color:var(--chalk-dim);background:var(--pitch-card);border:1px solid var(--pitch-line);border-left:3px solid var(--gold);border-radius:8px;padding:.6rem .8rem;}
 .wc-bracket-note svg{color:var(--gold);flex-shrink:0;margin-top:.1rem;}
 
-.wc-livebar{max-width:1200px;margin:0 auto 1rem;display:flex;align-items:center;gap:.7rem;background:linear-gradient(90deg,rgba(255,77,77,.14),rgba(255,77,77,.04));border:1px solid rgba(255,77,77,.4);border-radius:12px;padding:.55rem .8rem;flex-wrap:wrap;}
+.wc-livebar{width:fit-content;max-width:1200px;margin:0 auto 1rem;display:flex;align-items:center;justify-content:center;gap:.7rem;background:linear-gradient(90deg,rgba(255,77,77,.14),rgba(255,77,77,.04));border:1px solid rgba(255,77,77,.4);border-radius:12px;padding:.55rem .8rem;flex-wrap:wrap;}
 .wc-livebar-tag{display:inline-flex;align-items:center;gap:.4rem;font-size:.66rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#ff8a8a;flex-shrink:0;}
 .wc-livebar-games{display:flex;gap:.5rem;flex-wrap:wrap;}
 .wc-livebar-game{display:inline-flex;align-items:center;gap:.5rem;background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:999px;padding:.3rem .75rem;color:var(--chalk);font:inherit;font-size:.78rem;font-weight:600;cursor:pointer;}
