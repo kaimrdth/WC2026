@@ -167,32 +167,70 @@ function that proxies the request.
 - **Games today** (live, finished, or upcoming) → leads with them and what's at stake.
 - **No games today** → recaps the most recent matchday's results, then previews what's next.
 
-**Caching** keys off a hash of the facts (ignoring the ticking match clock): a repeat load
-with unchanged state serves the cached digest, while a new result or live-score change
-regenerates it — fresh during live games, cheap the rest of the time.
+### Rate-limit defenses
+
+Gemini's free tier limits **requests per minute**, and a naive "every browser calls the
+model" design trips it the moment a few people open the app at once. The digest is layered
+to keep calls to a minimum and never show a failure when it can avoid one:
+
+| Layer | What it does | Why it matters |
+| --- | --- | --- |
+| **L0 · browser cache** (`localStorage`) | Repeat load with unchanged state never hits the network | Reloads are free |
+| **Facts-hash key** | Hash ignores the ticking match clock (`44'` vs `45'`) | A live game that only advanced the clock doesn't regenerate |
+| **L1 · server memory** | Warm function instance caches by facts-hash | Bursts to one instance dedupe instantly |
+| **L2 · Netlify Blobs** | Durable, **shared** cache across all visitors + instances | N visitors on the same state → **one** Gemini call, globally |
+| **Request coalescing** | Concurrent identical requests await a single in-flight call | Simultaneous loads can't fan out into N calls |
+| **Stale-on-failure** | On a rate limit/error, serve the last good digest (`stale`) | Users see content, not an error or a blank panel |
+| **Model fallback + `Retry-After`** | `2.5-flash` → `2.0-flash`; passes Gemini's backoff hint through | Absorbs transient overload; client backs off correctly |
+
+Net effect: a 5-person burst that would have been 5 model calls collapses to **1**, and an
+actual rate limit degrades to a slightly-stale digest instead of a visible failure. (A raw
+`429` only reaches the browser when nothing is cached anywhere — and the panel then hides
+rather than showing an error.)
 
 ```mermaid
 sequenceDiagram
     participant UI as DigestPanel
-    participant LS as localStorage
+    participant LS as localStorage (L0)
     participant Fn as Netlify function
+    participant Mem as memory (L1)
+    participant Blob as Netlify Blobs (L2)
     participant G as Gemini
 
     UI->>UI: buildDigestFacts(results, liveGames)
     UI->>LS: lookup by facts-hash
-    alt cache hit (state unchanged)
-        LS-->>UI: cached digest
-    else miss (new result / live change)
+    alt L0 hit (this browser, unchanged state)
+        LS-->>UI: cached digest (no network)
+    else L0 miss
         UI->>Fn: POST { facts }
-        Fn->>G: prompt (key server-side, retries + model fallback)
-        G-->>Fn: { text }
-        Fn-->>UI: { text }
-        UI->>LS: store by facts-hash
+        Fn->>Mem: hash(facts) lookup
+        alt L1 hit
+            Mem-->>UI: { text, cached:"mem" }
+        else L1 miss
+            Fn->>Blob: shared lookup
+            alt L2 hit (another visitor already generated it)
+                Blob-->>UI: { text, cached:"blob" }
+            else L2 miss
+                Fn->>G: prompt (key server-side, coalesced, model fallback)
+                alt success
+                    G-->>Fn: { text }
+                    Fn->>Mem: store
+                    Fn->>Blob: store + update "latest"
+                    Fn-->>UI: { text }
+                    UI->>LS: store by facts-hash
+                else rate-limited / error
+                    Blob-->>Fn: last good ("latest")
+                    Fn-->>UI: { text, stale:true }
+                end
+            end
+        end
     end
 ```
 
 The model only narrates the facts it's given — it never invents scores, scorers, or
-fixtures. The model and prompt live in `netlify/functions/digest.mjs`.
+fixtures. The model, prompt, and caching live in `netlify/functions/digest.mjs`; the
+durable shared cache uses **Netlify Blobs** (auto-configured in the Netlify runtime, and
+the function degrades to memory-only if it's ever unavailable).
 
 ---
 
@@ -267,7 +305,7 @@ worldcup-2026-standalone/
 - **React 19** + **TypeScript 5.9** (strict)
 - **Vite 7** build
 - **lucide-react** icons
-- **Netlify Functions** (serverless) for the AI proxy
+- **Netlify Functions** (serverless) for the AI proxy, with **Netlify Blobs** as the shared digest cache
 - **Google Gemini** for the daily digest
 - **ESPN public API** for all match data (no key, CORS-open)
 

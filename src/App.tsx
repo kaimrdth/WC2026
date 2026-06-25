@@ -2271,8 +2271,15 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
   const [text,setText]=useState("");
   const [status,setStatus]=useState<"idle"|"loading"|"error">("idle");
   const [err,setErr]=useState("");
-  const [rateLimited,setRateLimited]=useState(false); // hit Gemini's rate limit → hide the panel
+  const [rateLimited,setRateLimited]=useState(false); // hit Gemini's rate limit with nothing to show → hide the panel
   const facts=useMemo(()=>buildDigestFacts(groupResults,liveGames),[groupResults,liveGames]);
+  const pendingRef=useRef(false); // guard against overlapping requests
+
+  const showDigest=(t:string)=>{
+    setText(t); setStatus("idle");
+    try{ localStorage.setItem("wc-digest-last",t); }catch{ /* ignore */ } // last-good fallback
+  };
+  const lastGood=()=>{ try{ return localStorage.getItem("wc-digest-last")||""; }catch{ return ""; } };
 
   const generate=async(force:boolean)=>{
     const key=digestCacheKey(facts);
@@ -2281,10 +2288,18 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
     if(!force){
       try{ const c=localStorage.getItem(key); if(c){ setText(JSON.parse(c).text); setStatus("idle"); return; } }catch{ /* ignore */ }
     }
+    if(pendingRef.current) return; // a request is already in flight
+    pendingRef.current=true;
     setStatus("loading"); setErr("");
     try{
       const r=await fetch(DIGEST_ENDPOINT,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({facts})});
-      if(r.status===429){ setRateLimited(true); setStatus("idle"); return; } // rate limited → hide the digest entirely
+      if(r.status===429){
+        // Rate limited. The server serves a stale digest when it can, so a raw 429 means
+        // nothing cached on the server either — fall back to our own last-good, else hide.
+        const prev=lastGood();
+        if(prev) showDigest(prev); else setRateLimited(true);
+        setStatus("idle"); return;
+      }
       if(!r.ok){
         let parts:string[]=[]; try{ const j=await r.json(); parts=[j.error,j.detail].filter(Boolean); }catch{ /* ignore */ }
         throw new Error(`HTTP ${r.status}${parts.length?` — ${parts.join(" · ").slice(0,220)}`:""}`);
@@ -2292,9 +2307,14 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
       const d=await r.json();
       const t=(d.text||"").trim();
       if(!t) throw new Error("empty response from model");
-      setText(t); setStatus("idle");
-      try{ localStorage.setItem(key,JSON.stringify({text:t})); }catch{ /* ignore */ }
-    }catch(e){ setErr(e instanceof Error?e.message:String(e)); setStatus("error"); }
+      showDigest(t);
+      if(!d.stale){ try{ localStorage.setItem(key,JSON.stringify({text:t})); }catch{ /* ignore */ } } // don't cache stale under this state's key
+    }catch(e){
+      // Network/other failure → show last-good rather than an error if we have one.
+      const prev=lastGood();
+      if(prev){ setText(prev); setStatus("idle"); }
+      else { setErr(e instanceof Error?e.message:String(e)); setStatus("error"); }
+    }finally{ pendingRef.current=false; }
   };
 
   // Always show the digest — there's always something to say (today's games, or a

@@ -1,14 +1,31 @@
 // Serverless proxy for the AI daily digest.
 // Keeps the Gemini API key server-side (set GEMINI_API_KEY in Netlify env vars).
-// The browser POSTs { facts: "<plain-text tournament state>" }; we prompt Gemini
-// and return { text }. Retries transient 429/500/503 (model overloaded) and falls
-// back to a second model.
+// The browser POSTs { facts: "<plain-text tournament state>" } and gets back { text }.
+//
+// Rate-limit strategy (the whole point of this layer):
+//   1. SHARED cache keyed by a content hash of the facts — so all visitors share ONE
+//      generation per tournament-state instead of each browser calling Gemini. This is
+//      what actually keeps us under Gemini's per-minute request limit when several
+//      people open the app at once. Two tiers: in-process memory (instant) + Netlify
+//      Blobs (durable, cross-instance).
+//   2. Request coalescing — concurrent identical requests on one instance await a single
+//      Gemini call rather than firing N of them.
+//   3. Graceful degradation — on a rate limit (or any failure) we serve the last good
+//      digest ("stale") instead of erroring, and pass Gemini's Retry-After back so the
+//      client can back off.
+
+import { getStore } from "@netlify/blobs";
 
 const MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
 // Retry rapidly only on server overload. 429 (rate limit) is NOT retried in a tight
 // loop — hammering it just makes the rate limit worse; we fall through to the next
 // model and surface the reason instead.
 const RETRYABLE = new Set([500, 503]);
+
+const MEM_TTL = 10 * 60 * 1000; // in-process cache freshness
+const mem = new Map();          // hash → { text, ts } (survives warm invocations)
+const inflight = new Map();     // hash → Promise<result> (coalesce concurrent calls)
+let lastGoodMem = null;         // most recent successful digest (memory fallback)
 
 const SYSTEM = `You are a sports writer producing a short daily briefing for a FIFA World Cup 2026 live tracker.
 Write 2-3 tight paragraphs (about 90-150 words total), plain text only — no markdown, no headers, no bullet points, no emojis.
@@ -20,19 +37,50 @@ Tone: lively and knowledgeable, like a TV anchor's cold open. Refer to "today", 
 
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
-// Pull a short human-readable reason out of Gemini's error JSON.
-function shortReason(raw) {
+const json = (obj, status = 200, headers = {}) =>
+  new Response(JSON.stringify(obj), {
+    status,
+    headers: { "content-type": "application/json", "cache-control": "no-store", ...headers },
+  });
+
+// Stable hash of the facts. Normalizes away the live match clock ("44'" vs "45'") so
+// two visitors a minute apart share the same cache entry as long as scores are equal.
+function hashFacts(facts) {
+  const stable = facts.replace(/\((?:\d+'|\d+\+\d+'|HT|Halftime)[^)]*,/g, "(LIVE,");
+  let h = 5381;
+  for (let i = 0; i < stable.length; i++) h = ((h << 5) + h + stable.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+// Netlify Blobs is auto-configured in the Netlify runtime; guard so the function still
+// works (memory-only) anywhere it isn't available.
+function blobStore() {
+  try { return getStore("digest"); } catch { return null; }
+}
+async function blobGet(store, key) {
+  if (!store) return null;
+  try { return await store.get(key, { type: "json" }); } catch { return null; }
+}
+async function blobSet(store, key, val) {
+  if (!store) return;
+  try { await store.setJSON(key, val); } catch { /* non-fatal */ }
+}
+
+// Pull a short human-readable reason + retry delay out of Gemini's error JSON.
+function parseError(raw) {
   try {
     const j = JSON.parse(raw);
     const msg = j?.error?.message || "";
-    const quota = (j?.error?.details || []).find((d) => /QuotaFailure/.test(d["@type"] || ""));
-    const retry = (j?.error?.details || []).find((d) => /RetryInfo/.test(d["@type"] || ""));
+    const details = j?.error?.details || [];
+    const quota = details.find((d) => /QuotaFailure/.test(d["@type"] || ""));
+    const retry = details.find((d) => /RetryInfo/.test(d["@type"] || ""));
     const bits = [msg];
     if (quota?.violations?.[0]?.quotaId) bits.push(`quota: ${quota.violations[0].quotaId}`);
     if (retry?.retryDelay) bits.push(`retry in ${retry.retryDelay}`);
-    return bits.filter(Boolean).join(" — ").slice(0, 220);
+    const secs = retry?.retryDelay ? parseInt(retry.retryDelay, 10) : null;
+    return { detail: bits.filter(Boolean).join(" — ").slice(0, 220), retryAfter: Number.isFinite(secs) ? secs : null };
   } catch {
-    return String(raw).slice(0, 220);
+    return { detail: String(raw).slice(0, 220), retryAfter: null };
   }
 }
 
@@ -46,63 +94,93 @@ async function callModel(model, key, body) {
       body: JSON.stringify(body),
     });
     if (r.ok) return { ok: true, data: await r.json() };
-    last = { status: r.status, detail: shortReason(await r.text()) };
+    const { detail, retryAfter } = parseError(await r.text());
+    last = { ok: false, status: r.status, detail, retryAfter };
     if (!RETRYABLE.has(r.status)) break; // 429/4xx — don't tight-loop; fall through
     if (i < 2) await sleep(500 * Math.pow(2, i)); // 500ms, 1000ms
   }
-  return { ok: false, ...last };
+  return last;
+}
+
+function bodyFor(model, facts) {
+  // Generous output budget so the digest is never truncated. On 2.5 "thinking" models,
+  // internal reasoning tokens are billed against maxOutputTokens — so we disable
+  // thinking (thinkingBudget: 0) to hand the whole budget to the text.
+  const generationConfig = { temperature: 0.7, maxOutputTokens: 2048 };
+  if (model.startsWith("gemini-2.5")) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  return {
+    systemInstruction: { parts: [{ text: SYSTEM }] },
+    contents: [{ parts: [{ text: `Tournament state:\n\n${facts}` }] }],
+    generationConfig,
+  };
+}
+
+// Try each model in turn. Returns { ok, text } or { ok:false, status, detail, retryAfter }.
+async function generate(facts, key) {
+  let lastErr = null;
+  for (const model of MODELS) {
+    const res = await callModel(model, key, bodyFor(model, facts));
+    if (res?.ok) {
+      const text = res.data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("").trim() ?? "";
+      if (text) return { ok: true, text, model };
+      lastErr = { ok: false, status: 502, detail: "empty completion", retryAfter: null };
+    } else {
+      lastErr = res;
+      if ([400, 401, 403, 404].includes(res?.status)) break; // fatal — don't try next model
+    }
+  }
+  return lastErr ?? { ok: false, status: 502, detail: "no response", retryAfter: null };
 }
 
 export default async (req) => {
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "POST only" }), { status: 405 });
-  }
+  if (req.method !== "POST") return json({ error: "POST only" }, 405);
+
   const key = process.env.GEMINI_API_KEY;
-  if (!key) {
-    return new Response(JSON.stringify({ error: "GEMINI_API_KEY not configured" }), { status: 500 });
-  }
+  if (!key) return json({ error: "GEMINI_API_KEY not configured" }, 500);
+
   let facts = "";
   try { ({ facts } = await req.json()); } catch { /* ignore */ }
-  if (!facts || typeof facts !== "string") {
-    return new Response(JSON.stringify({ error: "missing facts" }), { status: 400 });
+  if (!facts || typeof facts !== "string") return json({ error: "missing facts" }, 400);
+
+  const h = hashFacts(facts);
+  const store = blobStore();
+
+  // L1 — in-process memory (instant, free, no Gemini call).
+  const m = mem.get(h);
+  if (m && Date.now() - m.ts < MEM_TTL) return json({ text: m.text, cached: "mem" });
+
+  // L2 — shared Blobs cache (another instance/visitor already generated this state).
+  const b = await blobGet(store, `d_${h}`);
+  if (b?.text) {
+    mem.set(h, { text: b.text, ts: Date.now() });
+    return json({ text: b.text, cached: "blob" });
   }
 
-  // Generous output budget so the digest is never truncated. On 2.5 "thinking"
-  // models, internal reasoning tokens are billed against maxOutputTokens — so we
-  // also disable thinking (thinkingBudget: 0) to hand the whole budget to the text.
-  const bodyFor = (model) => {
-    const generationConfig = { temperature: 0.7, maxOutputTokens: 2048 };
-    if (model.startsWith("gemini-2.5")) generationConfig.thinkingConfig = { thinkingBudget: 0 };
-    return {
-      systemInstruction: { parts: [{ text: SYSTEM }] },
-      contents: [{ parts: [{ text: `Tournament state:\n\n${facts}` }] }],
-      generationConfig,
-    };
-  };
-
-  try {
-    let lastErr = null;
-    for (const model of MODELS) {
-      const res = await callModel(model, key, bodyFor(model));
-      if (res.ok) {
-        const text = res.data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("").trim() ?? "";
-        if (text) {
-          return new Response(JSON.stringify({ text, model }), {
-            headers: { "content-type": "application/json", "cache-control": "no-store" },
-          });
-        }
-        lastErr = { status: 502, detail: "empty completion" };
-      } else {
-        lastErr = res;
-        // stop on fatal client errors (bad key/model); for 429/5xx try the next model
-        if ([400, 401, 403, 404].includes(res.status)) break;
-      }
-    }
-    return new Response(
-      JSON.stringify({ error: `gemini ${lastErr?.status ?? "error"}`, detail: lastErr?.detail ?? "" }),
-      { status: lastErr?.status === 429 ? 429 : 502 }
-    );
-  } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), { status: 502 });
+  // Coalesce: if an identical request is already generating on this instance, await it.
+  let p = inflight.get(h);
+  if (!p) {
+    p = generate(facts, key);
+    inflight.set(h, p);
+    p.finally(() => inflight.delete(h));
   }
+  const r = await p;
+
+  if (r.ok) {
+    const entry = { text: r.text, ts: Date.now() };
+    if (mem.size > 100) mem.clear(); // bound memory
+    mem.set(h, entry);
+    lastGoodMem = entry;
+    await blobSet(store, `d_${h}`, entry);
+    await blobSet(store, "latest", entry); // for stale-on-failure fallback
+    return json({ text: r.text });
+  }
+
+  // Generation failed. Serve the last good digest (stale) rather than erroring/hiding.
+  const latest = (await blobGet(store, "latest")) || lastGoodMem;
+  if (latest?.text) return json({ text: latest.text, stale: true });
+
+  // Nothing cached to fall back on — surface the error (client hides on 429).
+  const headers = {};
+  if (r.status === 429 && r.retryAfter) headers["retry-after"] = String(r.retryAfter);
+  return json({ error: `gemini ${r.status ?? "error"}`, detail: r.detail ?? "" }, r.status === 429 ? 429 : 502, headers);
 };
