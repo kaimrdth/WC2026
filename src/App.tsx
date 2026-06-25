@@ -2271,6 +2271,7 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
   const [text,setText]=useState("");
   const [status,setStatus]=useState<"idle"|"loading"|"error">("idle");
   const [err,setErr]=useState("");
+  const [rateLimited,setRateLimited]=useState(false); // hit Gemini's rate limit → hide the panel
   const facts=useMemo(()=>buildDigestFacts(groupResults,liveGames),[groupResults,liveGames]);
 
   const generate=async(force:boolean)=>{
@@ -2283,6 +2284,7 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
     setStatus("loading"); setErr("");
     try{
       const r=await fetch(DIGEST_ENDPOINT,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({facts})});
+      if(r.status===429){ setRateLimited(true); setStatus("idle"); return; } // rate limited → hide the digest entirely
       if(!r.ok){
         let parts:string[]=[]; try{ const j=await r.json(); parts=[j.error,j.detail].filter(Boolean); }catch{ /* ignore */ }
         throw new Error(`HTTP ${r.status}${parts.length?` — ${parts.join(" · ").slice(0,220)}`:""}`);
@@ -2301,6 +2303,7 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
   useEffect(()=>{ if(hasData) generate(false); },[facts,hasData]); // eslint-disable-line
 
   if(!hasData) return null; // tournament over — nothing left to preview
+  if(rateLimited) return null; // Gemini rate limit hit — hide the digest rather than show an error
   return (
     <div className="wc-digest">
       <div className="wc-digest-head">
