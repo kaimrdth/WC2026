@@ -1115,7 +1115,7 @@ function MatchCard({match, result, isKnockout=false, teamA, teamB, goals, onSele
   );
 }
 
-function GroupCard({letter,groupResults,qualifiers,goalsByFixture,onSelectTeam,detailIds,onOpenDetail,onOpenPreview,liveByFixture,showFixtures,onToggleFixtures}:{
+function GroupCard({letter,groupResults,qualifiers,goalsByFixture,onSelectTeam,detailIds,onOpenDetail,onOpenPreview,liveByFixture,showFixtures,onToggleFixtures,flash}:{
   letter:string;groupResults:Record<string,ScoreResult>;
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   goalsByFixture:Record<string,GoalEvent[]>;
@@ -1126,6 +1126,7 @@ function GroupCard({letter,groupResults,qualifiers,goalsByFixture,onSelectTeam,d
   liveByFixture:Record<string,LiveGame>;
   showFixtures:boolean;
   onToggleFixtures:()=>void;
+  flash?:boolean;
 }) {
   const standings=computeStandings(letter,groupResults);
   const complete=groupIsComplete(letter,groupResults);
@@ -1134,7 +1135,7 @@ function GroupCard({letter,groupResults,qualifiers,goalsByFixture,onSelectTeam,d
   const fixtures=fixturesForGroup(letter);
 
   return (
-    <div className="wc-group-card">
+    <div className={`wc-group-card${flash?" wc-group-flash":""}`} id={`wc-group-${letter}`}>
       <div className="wc-group-head">
         <span className="wc-group-letter">{letter}</span>
         <span className={`wc-group-pill${complete?" wc-group-pill-done":""}`}>
@@ -1274,7 +1275,7 @@ function ScheduleView({groupResults,onSelectTeam,detailIds,onOpenDetail,onOpenPr
   );
 }
 
-function GroupsView({groupResults,qualifiers,goalsByFixture,onSelectTeam,detailIds,onOpenDetail,onOpenPreview,liveByFixture}:{
+function GroupsView({groupResults,qualifiers,goalsByFixture,onSelectTeam,detailIds,onOpenDetail,onOpenPreview,liveByFixture,focusGroup}:{
   groupResults:Record<string,ScoreResult>;
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   goalsByFixture:Record<string,GoalEvent[]>;
@@ -1283,6 +1284,7 @@ function GroupsView({groupResults,qualifiers,goalsByFixture,onSelectTeam,detailI
   onOpenDetail:(id:string)=>void;
   onOpenPreview:(id:string)=>void;
   liveByFixture:Record<string,LiveGame>;
+  focusGroup:{letter:string;k:number}|null;
 }) {
   const [view,setView]=useState<"tables"|"schedule">("tables");
   // matches collapsed by default — a clean grid of 12 tables, far less dense
@@ -1290,6 +1292,19 @@ function GroupsView({groupResults,qualifiers,goalsByFixture,onSelectTeam,detailI
   const allShown=GROUP_LETTERS.every(l=>expanded[l]);
   const toggleAll=()=>setExpanded(Object.fromEntries(GROUP_LETTERS.map(l=>[l,!allShown])));
   const toggleOne=(l:string)=>setExpanded(p=>({...p,[l]:!p[l]}));
+
+  // Deep-linked from the digest: jump to tables, highlight + scroll the group into view.
+  const [flash,setFlash]=useState<string|null>(null);
+  useEffect(()=>{
+    if(!focusGroup) return;
+    const l=focusGroup.letter;
+    setView("tables"); setFlash(l);
+    const t=setTimeout(()=>{
+      document.getElementById(`wc-group-${l}`)?.scrollIntoView({behavior:"smooth",block:"center"});
+    },60);
+    const clear=setTimeout(()=>setFlash(null),2000);
+    return ()=>{ clearTimeout(t); clearTimeout(clear); };
+  },[focusGroup?.k]); // eslint-disable-line
 
   return (
     <>
@@ -1311,7 +1326,7 @@ function GroupsView({groupResults,qualifiers,goalsByFixture,onSelectTeam,detailI
               qualifiers={qualifiers}
               goalsByFixture={goalsByFixture} onSelectTeam={onSelectTeam}
               detailIds={detailIds} onOpenDetail={onOpenDetail} onOpenPreview={onOpenPreview} liveByFixture={liveByFixture}
-              showFixtures={!!expanded[letter]} onToggleFixtures={()=>toggleOne(letter)}/>
+              showFixtures={!!expanded[letter]} onToggleFixtures={()=>toggleOne(letter)} flash={flash===letter}/>
           ))}
         </div>
       ):(
@@ -2254,25 +2269,90 @@ function digestCacheKey(facts:string):string{
   return `wc-digest:${h>>>0}`;
 }
 
-function Typewriter({text,speed=16}:{text:string;speed?:number}){
+// Non-AI fallback: a plain-language summary built entirely client-side from the same
+// data, so the digest panel always shows something even if the AI backend is down,
+// rate-limited, or unconfigured. Reads mechanically, but never blank.
+function fallbackDigest(groupResults:Record<string,ScoreResult>, liveGames:LiveGame[]):string{
+  const nm=(c:string)=>TEAM_BY_CODE[c]?.name??c;
+  const now=Date.now();
+  const today=localDayKey(new Date());
+  const liveIds=new Set(liveGames.map(g=>g.fixtureId));
+  const ms=(f:Fixture)=>new Date(f.kickoff).getTime();
+  const byKickoff=[...ALL_GROUP_MATCHES].sort((a,b)=>ms(a)-ms(b));
+  const res=(f:Fixture)=>{const r=groupResults[f.id]!;return `${nm(f.homeCode)} ${r.homeGoals}–${r.awayGoals} ${nm(f.awayCode)}`;};
+  const fix=(f:Fixture)=>`${nm(f.homeCode)} v ${nm(f.awayCode)} (${formatKickoff(f.kickoff).time})`;
+  const out:string[]=[];
+  if(liveGames.length) out.push(`Live now: ${liveGames.map(g=>`${nm(g.homeCode)} ${g.homeGoals}–${g.awayGoals} ${nm(g.awayCode)} (${g.clock||g.status})`).join("; ")}.`);
+  const todayFx=byKickoff.filter(f=>localDayKey(new Date(f.kickoff))===today);
+  if(liveGames.length||todayFx.length){
+    const done=todayFx.filter(f=>groupResults[f.id]&&!liveIds.has(f.id));
+    const next=todayFx.filter(f=>!groupResults[f.id]&&!liveIds.has(f.id));
+    if(done.length) out.push(`Today's results: ${done.map(res).join("; ")}.`);
+    if(next.length) out.push(`Still to come today: ${next.map(fix).join("; ")}.`);
+  }else{
+    const done=byKickoff.filter(f=>groupResults[f.id]&&!liveIds.has(f.id));
+    if(done.length){ const last=localDayKey(new Date(done[done.length-1].kickoff)); out.push(`Most recent results (${longDate(done[done.length-1].kickoff)}): ${done.filter(f=>localDayKey(new Date(f.kickoff))===last).map(res).join("; ")}.`); }
+    const up=byKickoff.filter(f=>!groupResults[f.id]&&!liveIds.has(f.id)&&ms(f)>=now);
+    if(up.length){ const nd=localDayKey(new Date(up[0].kickoff)); out.push(`Next up (${longDate(up[0].kickoff)}): ${up.filter(f=>localDayKey(new Date(f.kickoff))===nd).map(fix).join("; ")}.`); }
+  }
+  return out.join(" ");
+}
+
+// ── Digest linkification ──────────────────────────────────────────────────────
+// Turn team names and "Group X" mentions in the digest prose into clickable links.
+const DIGEST_TEAM_BY_NAME:Record<string,string>=Object.fromEntries(TEAMS.map(t=>[t.name.toLowerCase(),t.code]));
+const DIGEST_LINK_RE=(()=>{
+  // Longest names first so "South Korea" wins over "Korea" at the same position.
+  const names=[...TEAMS].map(t=>t.name).sort((a,b)=>b.length-a.length)
+    .map(n=>n.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
+  return new RegExp(`(?<![\\p{L}])(?:Group [A-L]|${names.join("|")})(?![\\p{L}])`,"giu");
+})();
+type DigestSeg={t:"text"|"team"|"group";v:string;code?:string};
+function tokenizeDigest(text:string):DigestSeg[]{
+  const out:DigestSeg[]=[]; let last=0; let m:RegExpExecArray|null;
+  DIGEST_LINK_RE.lastIndex=0;
+  while((m=DIGEST_LINK_RE.exec(text))){
+    if(m.index>last) out.push({t:"text",v:text.slice(last,m.index)});
+    const v=m[0];
+    if(/^Group /i.test(v)) out.push({t:"group",v,code:v.slice(6).toUpperCase()});
+    else{ const code=DIGEST_TEAM_BY_NAME[v.toLowerCase()]; out.push(code?{t:"team",v,code}:{t:"text",v}); }
+    last=m.index+v.length;
+  }
+  if(last<text.length) out.push({t:"text",v:text.slice(last)});
+  return out;
+}
+function DigestLinks({text,onSelectTeam,onSelectGroup}:{
+  text:string;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
+}){
+  const segs=useMemo(()=>tokenizeDigest(text),[text]);
+  return <>{segs.map((s,i)=>s.t==="text"
+    ? <span key={i}>{s.v}</span>
+    : <button key={i} className="wc-digest-link" onClick={()=>s.t==="team"?onSelectTeam(s.code!):onSelectGroup(s.code!)}>{s.v}</button>)}</>;
+}
+
+// Types out the digest, then swaps to the linkified version once fully revealed.
+function Typewriter({text,onSelectTeam,onSelectGroup,speed=16}:{
+  text:string;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;speed?:number;
+}){
   const [n,setN]=useState(0);
   useEffect(()=>{
     setN(0); if(!text) return;
     let i=0; const id=setInterval(()=>{ i+=2; setN(Math.min(i,text.length)); if(i>=text.length) clearInterval(id); },speed);
     return ()=>clearInterval(id);
   },[text,speed]);
-  const done=n>=text.length;
-  return <>{text.slice(0,n)}{!done&&<span className="wc-caret"/>}</>;
+  if(n>=text.length) return <DigestLinks text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>;
+  return <>{text.slice(0,n)}<span className="wc-caret"/></>;
 }
 
-function DigestPanel({groupResults,liveGames,matchesPlayed}:{
+function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelectGroup}:{
   groupResults:Record<string,ScoreResult>;liveGames:LiveGame[];matchesPlayed:number;
+  onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
 }){
   const [text,setText]=useState("");
   const [status,setStatus]=useState<"idle"|"loading"|"error">("idle");
   const [err,setErr]=useState("");
-  const [rateLimited,setRateLimited]=useState(false); // hit Gemini's rate limit with nothing to show → hide the panel
   const facts=useMemo(()=>buildDigestFacts(groupResults,liveGames),[groupResults,liveGames]);
+  const fallback=useMemo(()=>fallbackDigest(groupResults,liveGames),[groupResults,liveGames]);
   const pendingRef=useRef(false); // guard against overlapping requests
 
   const showDigest=(t:string)=>{
@@ -2280,6 +2360,9 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
     try{ localStorage.setItem("wc-digest-last",t); }catch{ /* ignore */ } // last-good fallback
   };
   const lastGood=()=>{ try{ return localStorage.getItem("wc-digest-last")||""; }catch{ return ""; } };
+  // Best available text when the AI call fails: our cached last-good digest, else the
+  // locally-built templated summary. Never blank as long as there's data.
+  const bestEffort=()=>lastGood()||fallback;
 
   const generate=async(force:boolean)=>{
     const key=digestCacheKey(facts);
@@ -2293,27 +2376,24 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
     setStatus("loading"); setErr("");
     try{
       const r=await fetch(DIGEST_ENDPOINT,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({facts})});
-      if(r.status===429){
-        // Rate limited. The server serves a stale digest when it can, so a raw 429 means
-        // nothing cached on the server either — fall back to our own last-good, else hide.
-        const prev=lastGood();
-        if(prev) showDigest(prev); else setRateLimited(true);
-        setStatus("idle"); return;
-      }
       if(!r.ok){
-        let parts:string[]=[]; try{ const j=await r.json(); parts=[j.error,j.detail].filter(Boolean); }catch{ /* ignore */ }
-        throw new Error(`HTTP ${r.status}${parts.length?` — ${parts.join(" · ").slice(0,220)}`:""}`);
+        // Any backend failure (rate limit, missing key, outage) → show the best text we
+        // have (cached last-good, else the local templated summary). Never go blank.
+        const fb=bestEffort();
+        if(fb){ setText(fb); setStatus("idle"); }
+        else { setErr(`digest unavailable (HTTP ${r.status})`); setStatus("error"); }
+        return;
       }
       const d=await r.json();
       const t=(d.text||"").trim();
       if(!t) throw new Error("empty response from model");
       showDigest(t);
       if(!d.stale){ try{ localStorage.setItem(key,JSON.stringify({text:t})); }catch{ /* ignore */ } } // don't cache stale under this state's key
-    }catch(e){
-      // Network/other failure → show last-good rather than an error if we have one.
-      const prev=lastGood();
-      if(prev){ setText(prev); setStatus("idle"); }
-      else { setErr(e instanceof Error?e.message:String(e)); setStatus("error"); }
+    }catch{
+      // Network/parse failure → same best-effort fallback.
+      const fb=bestEffort();
+      if(fb){ setText(fb); setStatus("idle"); }
+      else { setErr("digest unavailable"); setStatus("error"); }
     }finally{ pendingRef.current=false; }
   };
 
@@ -2323,7 +2403,6 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
   useEffect(()=>{ if(hasData) generate(false); },[facts,hasData]); // eslint-disable-line
 
   if(!hasData) return null; // tournament over — nothing left to preview
-  if(rateLimited) return null; // Gemini rate limit hit — hide the digest rather than show an error
   return (
     <div className="wc-digest">
       <div className="wc-digest-head">
@@ -2334,7 +2413,7 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
       </div>
       <p className="wc-digest-body">
         {text
-          ? <Typewriter text={text}/>
+          ? <Typewriter text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
           : status==="error"
             ? <span className="wc-digest-err">Couldn’t generate the digest — {err}. <button className="wc-digest-retry" onClick={()=>generate(true)}>Retry</button></span>
             : <span className="wc-digest-loading">Generating today’s briefing…</span>}
@@ -2367,6 +2446,9 @@ export default function App() {
   // clicking a team in a match card jumps to its Teams page entry
   const [focusTeam,setFocusTeam]=useState<{code:string;k:number}|null>(null);
   const goToTeam=(code:string)=>{ setStage("teams"); setFocusTeam({code,k:Date.now()}); };
+  // clicking a group in the digest jumps to the Groups view and scrolls to that group
+  const [focusGroup,setFocusGroup]=useState<{letter:string;k:number}|null>(null);
+  const goToGroup=(letter:string)=>{ setStage("groups"); setFocusGroup({letter,k:Date.now()}); };
 
   // detailed match view + pre-match preview (modals)
   const [detailId,setDetailId]=useState<string|null>(null);
@@ -2489,7 +2571,7 @@ export default function App() {
         </div>
       </header>
 
-      {DIGEST_ENABLED&&<DigestPanel groupResults={groupResults} liveGames={liveGames} matchesPlayed={liveMatchesPlayed}/>}
+      {DIGEST_ENABLED&&<DigestPanel groupResults={groupResults} liveGames={liveGames} matchesPlayed={liveMatchesPlayed} onSelectTeam={goToTeam} onSelectGroup={goToGroup}/>}
 
       <LiveBanner games={liveGames} onOpen={setDetailId}/>
 
@@ -2522,7 +2604,8 @@ export default function App() {
         {stage==="groups"&&(
           <GroupsView groupResults={groupResults}
             qualifiers={qualifiers} goalsByFixture={goalsByFixture} onSelectTeam={goToTeam}
-            detailIds={detailIds} onOpenDetail={setDetailId} onOpenPreview={setPreviewId} liveByFixture={liveByFixture}/>
+            detailIds={detailIds} onOpenDetail={setDetailId} onOpenPreview={setPreviewId} liveByFixture={liveByFixture}
+            focusGroup={focusGroup}/>
         )}
         {stage==="thirds"&&<ThirdPlaceTableView groupResults={groupResults} liveByFixture={liveByFixture} onSelectTeam={goToTeam}/>}
         {stage==="stats"&&(
@@ -2657,7 +2740,9 @@ const CSS = `
 .wc-sched-chev{margin-left:auto;color:var(--gold);font-weight:700;}
 .wc-groups-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:1rem;align-items:start;}
 
-.wc-group-card{background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:14px;padding:1rem;}
+.wc-group-card{background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:14px;padding:1rem;scroll-margin-top:1rem;}
+.wc-group-flash{animation:wc-group-flash 2s ease-out;}
+@keyframes wc-group-flash{0%,30%{border-color:var(--gold);box-shadow:0 0 0 3px rgba(215,163,61,.3);}100%{border-color:var(--pitch-line);box-shadow:0 0 0 0 rgba(215,163,61,0);}}
 .wc-group-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:.65rem;}
 .wc-group-letter{font-family:'Anton',sans-serif;font-size:1.5rem;color:var(--gold);}
 .wc-group-pill{display:inline-flex;align-items:center;gap:.25rem;background:var(--pitch-deep);border:1px solid var(--pitch-line);border-radius:999px;padding:.2rem .65rem;font-size:.65rem;font-weight:700;color:var(--chalk-dim);}
@@ -2724,6 +2809,8 @@ const CSS = `
 .wc-digest-err{color:#f3b0a6;font-size:.78rem;}
 .wc-digest-retry{background:none;border:none;color:var(--gold);font:inherit;font-weight:700;text-decoration:underline;cursor:pointer;padding:0;}
 .wc-caret{display:inline-block;width:.5rem;height:1em;background:var(--gold);margin-left:1px;vertical-align:text-bottom;animation:wc-blink 1s step-end infinite;}
+.wc-digest-link{display:inline;background:none;border:none;padding:0;margin:0;font:inherit;color:var(--gold);font-weight:700;cursor:pointer;border-bottom:1px solid rgba(215,163,61,.35);line-height:inherit;}
+.wc-digest-link:hover{border-bottom-color:var(--gold);background:rgba(215,163,61,.1);}
 @keyframes wc-blink{50%{opacity:0;}}
 
 /* projected-bracket note */
