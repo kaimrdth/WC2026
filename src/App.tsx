@@ -466,7 +466,7 @@ function anyMatchWindowActive(now: number): boolean {
 const SUMMARY_URL = (eventId: string) =>
   `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event=${eventId}`;
 
-interface DetailPlayer { name:string; jersey:string; pos:string; place:number; starter:boolean; on:boolean; off:boolean; }
+interface DetailPlayer { name:string; jersey:string; pos:string; place:number; starter:boolean; on:boolean; off:boolean; captain:boolean; }
 interface DetailTeam { side:"home"|"away"; code:string; name:string; formation:string; starters:DetailPlayer[]; bench:DetailPlayer[]; }
 type TLType = "goal"|"yellow"|"red"|"sub";
 interface TimelineEvent { order:number; minute:string; side:"home"|"away"; type:TLType; main:string; detail?:string; }
@@ -481,6 +481,7 @@ function parseRoster(r:any):DetailTeam {
     starter: !!p.starter,
     on: !!p.subbedIn,
     off: !!p.subbedOut,
+    captain: !!p.captain,
   }));
   return {
     side: r.homeAway,
@@ -539,6 +540,34 @@ async function fetchMatchDetail(eventId:string):Promise<MatchDetail> {
     }
   }
   return { home:homeTeam, away:awayTeam, events };
+}
+
+// ── Confirmed lineups (ESPN-sourced) ──────────────────────────────────────────
+// A team's most recent ESPN-published starting XI. We only ever claim a lineup is
+// "confirmed" when it comes from here — the static TEAM_PROFILES XIs are predictions.
+interface ConfirmedXI { code:string; formation:string; xi:Player[]; fixtureId:string; kickoffMs:number; }
+
+const lastName=(n:string)=>{const p=n.trim().split(" ");return p.length>1?p.slice(1).join(" "):n;};
+
+// Convert an ESPN roster into the Player[] shape the pitch diagram expects, sorted
+// by formation place (GK → attack). Club is enriched from the static squad data.
+function detailTeamToXI(r:DetailTeam):Player[]{
+  const clubByName=new Map<string,string>();
+  const prof=TEAM_PROFILES[r.code];
+  if(prof) for(const p of prof.xi){ if(p.name) clubByName.set(lastName(p.name).toLowerCase(),p.club ?? ""); }
+  return r.starters.map(p=>({
+    name: p.captain?`${p.name} (C)`:p.name,
+    club: clubByName.get(lastName(p.name).toLowerCase()) ?? "",
+    pos: p.pos || "",
+  }));
+}
+
+// Fetch the published rosters for one event (only teams that already have a posted XI).
+async function fetchEventLineups(eventId:string):Promise<DetailTeam[]>{
+  const resp=await fetch(SUMMARY_URL(eventId));
+  if(!resp.ok) throw new Error(`ESPN responded ${resp.status}`);
+  const s=await resp.json();
+  return ((s.rosters ?? []) as any[]).map(parseRoster).filter(r=>r.starters.length>=11);
 }
 
 function computeStandings(letter: string, groupResults: Record<string, ScoreResult>): StandingRow[] {
@@ -870,10 +899,11 @@ function TeamHub({team,groupResults,liveGoals,qualifiers,detailIds,onOpenDetail,
   );
 }
 
-function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,detailIds,onOpenDetail,onSelectTeam}:{
+function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confirmed,detailIds,onOpenDetail,onSelectTeam}:{
   team:Team;focusKey:number|null;
   groupResults:Record<string,ScoreResult>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
+  confirmed?:ConfirmedXI;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;
 }) {
   const profile=TEAM_PROFILES[team.code];
@@ -887,6 +917,11 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,detail
     if(focusKey!=null){ setOpen(true); ref.current?.scrollIntoView({behavior:"smooth",block:"start"}); }
   },[focusKey]);
   if(!profile)return null;
+  // Prefer ESPN's published XI when we have one; otherwise fall back to the predicted squad.
+  const formation=confirmed?.formation || profile.formation;
+  const xi=confirmed?.xi ?? profile.xi;
+  const confirmedFx=confirmed?FIXTURE_BY_ID[confirmed.fixtureId]:undefined;
+  const confirmedLabel=confirmedFx?`Confirmed XI · MD${confirmedFx.matchday} v ${confirmedFx.homeCode===team.code?confirmedFx.awayCode:confirmedFx.homeCode}`:"Confirmed XI";
   return (
     <div className="wc-team-card" ref={ref}>
       <button className="wc-team-card-head" onClick={()=>setOpen(o=>!o)}>
@@ -904,7 +939,7 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,detail
             <span className="wc-team-chip" style={{borderColor:confed.color,color:confed.color}}>{confed.label}</span>
             {coach&&<span className="wc-team-chip"><span className="wc-team-chip-k">Coach</span> {coach}</span>}
             {captain&&<span className="wc-team-chip"><span className="wc-team-chip-k">Captain</span> {captain}</span>}
-            <span className="wc-team-chip"><span className="wc-team-chip-k">Formation</span> {profile.formation}</span>
+            <span className="wc-team-chip"><span className="wc-team-chip-k">Formation</span> {formation}</span>
           </div>
 
           <TeamHub team={team} groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
@@ -914,13 +949,13 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,detail
             <div className="wc-team-body-text">
               <p className="wc-team-narrative">{profile.narrative}</p>
               <div className="wc-team-formation-row">
-                <span className={`wc-lineup-badge${profile.confirmed?" wc-lineup-confirmed":""}`}>
-                  {profile.confirmed?"Confirmed squad":"Predicted XI"}
+                <span className={`wc-lineup-badge${confirmed?" wc-lineup-confirmed":""}`}>
+                  {confirmed?confirmedLabel:"Predicted XI"}
                 </span>
               </div>
             </div>
             <div className="wc-team-pitch-wrap">
-              <PitchDiagram formation={profile.formation} xi={profile.xi}/>
+              <PitchDiagram formation={formation} xi={xi}/>
             </div>
           </div>
         </div>
@@ -1583,9 +1618,10 @@ function FocusPickBridge({focusTeam,onPick}:{focusTeam:{code:string;k:number}|nu
 }
 
 
-function TeamsView({groupResults,liveGoals,qualifiers,detailIds,onOpenDetail,onSelectTeam,focusTeam}:{
+function TeamsView({groupResults,liveGoals,qualifiers,confirmedLineups,detailIds,onOpenDetail,onSelectTeam,focusTeam}:{
   groupResults:Record<string,ScoreResult>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
+  confirmedLineups:Record<string,ConfirmedXI>;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;
   focusTeam:{code:string;k:number}|null;
 }) {
@@ -1640,6 +1676,7 @@ function TeamsView({groupResults,liveGoals,qualifiers,detailIds,onOpenDetail,onS
           <TeamProfileCard key={team.code} team={team}
             focusKey={focusTeam?.code===team.code?focusTeam.k:null}
             groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
+            confirmed={confirmedLineups[team.code]}
             detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam}/>
         ))}
     </div>
@@ -1803,24 +1840,26 @@ function MatchDetailModal({eventId,fixture,result,live,onClose,onSelectTeam}:{
   );
 }
 
-function PreviewPitch({team,profile}:{team:Team;profile:TeamProfile}){
+function PreviewPitch({team,profile,confirmed}:{team:Team;profile:TeamProfile;confirmed?:ConfirmedXI}){
+  const formation=confirmed?.formation || profile.formation;
+  const xi=confirmed?.xi ?? profile.xi;
   return (
     <div className="wc-detail-pitch-card">
       <div className="wc-detail-pitch-head">
         <span className="wc-detail-pitch-team"><Flag code={team.code} className="wc-flag-sm"/> {team.name}</span>
-        <span className="wc-detail-pitch-form">{profile.formation}</span>
+        <span className="wc-detail-pitch-form">{formation}</span>
       </div>
       <div className="wc-preview-meta">
         {COACHES[team.code]&&<span className="wc-preview-coach"><span className="wc-team-chip-k">Coach</span> {COACHES[team.code]}</span>}
-        <span className={`wc-lineup-badge${profile.confirmed?" wc-lineup-confirmed":""}`}>{profile.confirmed?"Confirmed XI":"Predicted XI"}</span>
+        <span className={`wc-lineup-badge${confirmed?" wc-lineup-confirmed":""}`}>{confirmed?"Confirmed XI":"Predicted XI"}</span>
       </div>
-      <PitchDiagram formation={profile.formation} xi={profile.xi}/>
+      <PitchDiagram formation={formation} xi={xi}/>
     </div>
   );
 }
 
-function MatchPreviewModal({fixture,groupResults,onClose,onSelectTeam}:{
-  fixture:Fixture;groupResults:Record<string,ScoreResult>;onClose:()=>void;onSelectTeam:(c:string)=>void;
+function MatchPreviewModal({fixture,groupResults,confirmedLineups,onClose,onSelectTeam}:{
+  fixture:Fixture;groupResults:Record<string,ScoreResult>;confirmedLineups:Record<string,ConfirmedXI>;onClose:()=>void;onSelectTeam:(c:string)=>void;
 }){
   useEffect(()=>{
     const h=(e:KeyboardEvent)=>{ if(e.key==="Escape") onClose(); };
@@ -1869,8 +1908,8 @@ function MatchPreviewModal({fixture,groupResults,onClose,onSelectTeam}:{
         <div className="wc-preview-section">
           <div className="wc-preview-h">Projected line-ups</div>
           <div className="wc-detail-pitches">
-            {hp&&<PreviewPitch team={home} profile={hp}/>}
-            {ap&&<PreviewPitch team={away} profile={ap}/>}
+            {hp&&<PreviewPitch team={home} profile={hp} confirmed={confirmedLineups[home.code]}/>}
+            {ap&&<PreviewPitch team={away} profile={ap} confirmed={confirmedLineups[away.code]}/>}
           </div>
         </div>
       </div>
@@ -2176,6 +2215,15 @@ export default function App() {
   const [liveGames,setLiveGames]=useState<LiveGame[]>([]);
   const [updatedAt,setUpdatedAt]=useState<number|null>(null);
 
+  // ESPN-confirmed starting XIs, keyed by team code (last published lineup wins).
+  // Persisted so a team's last confirmed XI survives reloads between match windows.
+  const [confirmedLineups,setConfirmedLineups]=useState<Record<string,ConfirmedXI>>(()=>{
+    try{ return JSON.parse(localStorage.getItem("wc26_lineups") || "{}"); }catch{ return {}; }
+  });
+  const fetchedEventsRef=useRef<Set<string>>(new Set(
+    (()=>{ try{ return JSON.parse(localStorage.getItem("wc26_lineup_events") || "[]"); }catch{ return []; } })()
+  ));
+
   // clicking a team in a match card jumps to its Teams page entry
   const [focusTeam,setFocusTeam]=useState<{code:string;k:number}|null>(null);
   const goToTeam=(code:string)=>{ setStage("teams"); setFocusTeam({code,k:Date.now()}); };
@@ -2211,6 +2259,49 @@ export default function App() {
     run(true);
     return ()=>{ alive=false; clearTimeout(timer); };
   },[]);
+
+  // Candidate fixtures whose ESPN event has (or may soon have) a published lineup.
+  const lineupEvents=useMemo(()=>{
+    const m:Record<string,{eventId:string;kickoffMs:number}>={};
+    const add=(fid:string,eid:string|undefined)=>{
+      const fx=FIXTURE_BY_ID[fid];
+      if(fx&&eid) m[fid]={eventId:eid,kickoffMs:new Date(fx.kickoff).getTime()};
+    };
+    for(const [fid,eid] of Object.entries(liveEventIds)) add(fid,eid);
+    for(const g of liveGames) add(g.fixtureId,g.eventId);
+    return m;
+  },[liveEventIds,liveGames]);
+
+  // Pull published XIs for those events once each, keeping each team's most-recent lineup.
+  useEffect(()=>{
+    let alive=true;
+    (async()=>{
+      for(const [fid,{eventId,kickoffMs}] of Object.entries(lineupEvents)){
+        if(!alive) break;
+        if(fetchedEventsRef.current.has(eventId)) continue;
+        try{
+          const rosters=await fetchEventLineups(eventId);
+          if(!alive) break;
+          if(rosters.length){
+            fetchedEventsRef.current.add(eventId);
+            try{ localStorage.setItem("wc26_lineup_events",JSON.stringify([...fetchedEventsRef.current])); }catch{/* quota */}
+            setConfirmedLineups(prev=>{
+              const next={...prev};
+              for(const r of rosters){
+                const existing=next[r.code];
+                if(!existing || kickoffMs>=existing.kickoffMs){
+                  next[r.code]={code:r.code,formation:r.formation||TEAM_PROFILES[r.code]?.formation||"",xi:detailTeamToXI(r),fixtureId:fid,kickoffMs};
+                }
+              }
+              try{ localStorage.setItem("wc26_lineups",JSON.stringify(next)); }catch{/* quota */}
+              return next;
+            });
+          }
+        }catch{/* no lineup yet — retry on a later poll */}
+      }
+    })();
+    return ()=>{ alive=false; };
+  },[lineupEvents]);
 
   const goalsByFixture=useMemo(()=>{
     const m:Record<string,GoalEvent[]>={};
@@ -2299,6 +2390,7 @@ export default function App() {
         )}
         {stage==="teams"&&(
           <TeamsView groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
+            confirmedLineups={confirmedLineups}
             detailIds={detailIds} onOpenDetail={setDetailId} onSelectTeam={goToTeam} focusTeam={focusTeam}/>
         )}
         {stage==="knockout"&&(
@@ -2317,7 +2409,7 @@ export default function App() {
       )}
 
       {previewId&&FIXTURE_BY_ID[previewId]&&(
-        <MatchPreviewModal fixture={FIXTURE_BY_ID[previewId]} groupResults={groupResults}
+        <MatchPreviewModal fixture={FIXTURE_BY_ID[previewId]} groupResults={groupResults} confirmedLineups={confirmedLineups}
           onClose={()=>setPreviewId(null)}
           onSelectTeam={(c)=>{ setPreviewId(null); goToTeam(c); }}/>
       )}
