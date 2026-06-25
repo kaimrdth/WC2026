@@ -1251,16 +1251,32 @@ function GroupsView({groupResults,qualifiers,goalsByFixture,onSelectTeam,detailI
   );
 }
 
-function ThirdPlaceTableView({groupResults,onSelectTeam}:{groupResults:Record<string,ScoreResult>;onSelectTeam:(code:string)=>void}) {
+function ThirdPlaceTableView({groupResults,liveByFixture,onSelectTeam}:{groupResults:Record<string,ScoreResult>;liveByFixture:Record<string,LiveGame>;onSelectTeam:(code:string)=>void}) {
+  // Fold in-progress games into the standings so the table reflects results "as it stands".
+  const liveIds=Object.keys(liveByFixture);
+  const effectiveResults=useMemo(()=>{
+    const merged:Record<string,ScoreResult>={...groupResults};
+    for(const lg of Object.values(liveByFixture)){
+      merged[lg.fixtureId]={homeGoals:lg.homeGoals,awayGoals:lg.awayGoals};
+    }
+    return merged;
+  },[groupResults,liveByFixture]);
+  // teams currently playing a live match — flagged in the table
+  const liveCodes=useMemo(()=>{
+    const s=new Set<string>();
+    for(const lg of Object.values(liveByFixture)){ s.add(lg.homeCode); s.add(lg.awayCode); }
+    return s;
+  },[liveByFixture]);
+
   const allThirds=useMemo(()=>{
     const pool:StandingRow[]=[];
     GROUP_LETTERS.forEach(letter=>{
-      const s=computeStandings(letter,groupResults);
+      const s=computeStandings(letter,effectiveResults);
       if(s[2]) pool.push({...s[2],origin:letter});
     });
     pool.sort((a,b)=>(b.pts-a.pts)||(b.gd-a.gd)||(b.gf-a.gf)||(b.rating-a.rating));
     return pool;
-  },[groupResults]);
+  },[effectiveResults]);
 
   const completedGroups=GROUP_LETTERS.filter(l=>groupIsComplete(l,groupResults)).length;
   const advancingCodes=new Set(allThirds.slice(0,8).map(t=>t.code));
@@ -1297,7 +1313,7 @@ function ThirdPlaceTableView({groupResults,onSelectTeam}:{groupResults:Record<st
 
       <div className="wc-thirds-table-wrap">
         <div className="wc-thirds-table-header">
-          <span>All third-placed teams</span>
+          <span>All third-placed teams {liveIds.length>0&&<span className="wc-thirds-live-tag">· as it stands</span>}</span>
           <span className="wc-thirds-progress">{completedGroups} / 12 groups complete</span>
         </div>
         {allThirds.length===0?(
@@ -1309,7 +1325,7 @@ function ThirdPlaceTableView({groupResults,onSelectTeam}:{groupResults:Record<st
               {allThirds.map((t,i)=>(
                 <tr key={t.code} className={advancingCodes.has(t.code)?"wc-row-through":"wc-row-out"}>
                   <td className="wc-pos">{i+1}</td>
-                  <td><TeamChip team={t} onSelect={onSelectTeam}/></td>
+                  <td><TeamChip team={t} onSelect={onSelectTeam}/>{liveCodes.has(t.code)&&<span className="wc-thirds-live-dot" title="Currently playing">LIVE</span>}</td>
                   <td className="wc-thirds-grp">{t.origin}</td>
                   <td>{t.played}</td><td>{t.win}</td><td>{t.draw}</td><td>{t.loss}</td>
                   <td>{fmtGD(t.gd)}</td><td className="wc-pts">{t.pts}</td>
@@ -2277,7 +2293,7 @@ export default function App() {
             qualifiers={qualifiers} goalsByFixture={goalsByFixture} onSelectTeam={goToTeam}
             detailIds={detailIds} onOpenDetail={setDetailId} onOpenPreview={setPreviewId} liveByFixture={liveByFixture}/>
         )}
-        {stage==="thirds"&&<ThirdPlaceTableView groupResults={groupResults} onSelectTeam={goToTeam}/>}
+        {stage==="thirds"&&<ThirdPlaceTableView groupResults={groupResults} liveByFixture={liveByFixture} onSelectTeam={goToTeam}/>}
         {stage==="stats"&&(
           <StatsView goals={liveGoals} cards={liveCards} matchesPlayed={liveMatchesPlayed} onSelectTeam={goToTeam}/>
         )}
@@ -2655,6 +2671,8 @@ const CSS = `
 .wc-thirds-table{min-width:440px;}
 .wc-thirds-table-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.7rem;font-weight:700;font-size:.88rem;}
 .wc-thirds-progress{font-size:.7rem;color:var(--chalk-dim);font-weight:400;}
+.wc-thirds-live-tag{color:#ff8a8a;font-weight:800;font-size:.72rem;letter-spacing:.02em;}
+.wc-thirds-live-dot{display:inline-flex;align-items:center;margin-left:.4rem;padding:.05rem .3rem;border-radius:.25rem;font-size:.52rem;font-weight:800;letter-spacing:.05em;color:#ff8a8a;background:rgba(255,77,77,.14);vertical-align:middle;animation:wc-pulse 1.6s ease-out infinite;}
 .wc-thirds-grp{font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:700;color:var(--gold);text-align:center;}
 .wc-thirds-table td{vertical-align:middle;}
 .wc-thirds-empty{color:var(--chalk-dim);font-size:.82rem;padding:1.5rem 0;text-align:center;}
