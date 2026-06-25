@@ -1,0 +1,14 @@
+/* Minimal reset — the app ships its own scoped `wc-*` theme inside App.tsx */
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  background: #0f3d2e;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

@@ -1,0 +1,15 @@
+# Netlify config for the standalone World Cup 2026 app.
+# In the Netlify UI set the site's "Base directory" to: worldcup-2026-standalone
+# (paths below are relative to that base).
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  # Vite 7 requires Node 20.19+/22.12+; pin to 22 to be safe.
+  NODE_VERSION = "22"
+
+# The AI digest needs GEMINI_API_KEY set in the Netlify UI (Site settings → Env vars).
+# Never commit the key. For local testing run `netlify dev` with a gitignored .env.
