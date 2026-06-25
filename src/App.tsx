@@ -2175,33 +2175,66 @@ function LiveBanner({games,onOpen}:{
 }
 
 // ── AI daily digest (Gemini via the Netlify function proxy) ───────────────────
-// Disabled for now (rate limits). Flip to true to bring the digest back.
-const DIGEST_ENABLED = false;
+const DIGEST_ENABLED = true;
 const DIGEST_ENDPOINT = "/.netlify/functions/digest";
 const localDayKey = (d:Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 
 // Compact, factual summary of the tournament's current state for the model to
 // narrate from (so it never invents scores).
+const longDate=(iso:string|number)=>new Date(iso).toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"});
+
+// Builds the plain-text tournament state the model narrates from. Picks the focus
+// automatically: today's games if there are any (live, done, or upcoming); otherwise
+// the most recent matchday's results plus the next fixtures to come.
 function buildDigestFacts(groupResults:Record<string,ScoreResult>, liveGames:LiveGame[]):string {
   const nm=(c:string)=>TEAM_BY_CODE[c]?.name??c;
+  const now=Date.now();
   const today=localDayKey(new Date());
+  const liveIds=new Set(liveGames.map(g=>g.fixtureId));
+  const ms=(f:Fixture)=>new Date(f.kickoff).getTime();
+  const byKickoff=[...ALL_GROUP_MATCHES].sort((a,b)=>ms(a)-ms(b));
+
+  const todayFx=byKickoff.filter(f=>localDayKey(new Date(f.kickoff))===today);
+  const todayDone=todayFx.filter(f=>groupResults[f.id]&&!liveIds.has(f.id));
+  const todayNext=todayFx.filter(f=>!groupResults[f.id]&&!liveIds.has(f.id));
+  const hasGamesToday=liveGames.length>0||todayFx.length>0;
+
   const lines:string[]=[];
   lines.push(`Today's date: ${new Date().toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"})}`);
+  lines.push(`Focus: ${hasGamesToday?"there are matches today — lead with them":"no matches today — recap the most recent results and preview what's next"}.`);
+
   if(liveGames.length){
     lines.push("LIVE RIGHT NOW:");
     for(const g of liveGames) lines.push(`- ${nm(g.homeCode)} ${g.homeGoals}-${g.awayGoals} ${nm(g.awayCode)} (${g.clock||g.status}, Group ${FIXTURE_BY_ID[g.fixtureId]?.group})`);
   }
-  const todayFx=ALL_GROUP_MATCHES.filter(f=>localDayKey(new Date(f.kickoff))===today);
-  const played=todayFx.filter(f=>groupResults[f.id]&&!liveGames.some(g=>g.fixtureId===f.id));
-  const upcoming=todayFx.filter(f=>!groupResults[f.id]&&!liveGames.some(g=>g.fixtureId===f.id));
-  if(played.length){
-    lines.push("TODAY'S COMPLETED RESULTS:");
-    for(const f of played){ const r=groupResults[f.id]!; lines.push(`- ${nm(f.homeCode)} ${r.homeGoals}-${r.awayGoals} ${nm(f.awayCode)} (Group ${f.group})`); }
+
+  if(hasGamesToday){
+    if(todayDone.length){
+      lines.push("TODAY'S COMPLETED RESULTS:");
+      for(const f of todayDone){ const r=groupResults[f.id]!; lines.push(`- ${nm(f.homeCode)} ${r.homeGoals}-${r.awayGoals} ${nm(f.awayCode)} (Group ${f.group})`); }
+    }
+    if(todayNext.length){
+      lines.push("STILL TO COME TODAY:");
+      for(const f of todayNext){ lines.push(`- ${nm(f.homeCode)} vs ${nm(f.awayCode)} at ${formatKickoff(f.kickoff).time} (Group ${f.group}, ${f.venue})`); }
+    }
+  }else{
+    // No games today — recap the latest matchday and preview the next one.
+    const done=byKickoff.filter(f=>groupResults[f.id]&&!liveIds.has(f.id));
+    if(done.length){
+      const lastDay=localDayKey(new Date(done[done.length-1].kickoff));
+      const lastDayFx=done.filter(f=>localDayKey(new Date(f.kickoff))===lastDay);
+      lines.push(`MOST RECENT RESULTS (${longDate(lastDayFx[lastDayFx.length-1].kickoff)}):`);
+      for(const f of lastDayFx){ const r=groupResults[f.id]!; lines.push(`- ${nm(f.homeCode)} ${r.homeGoals}-${r.awayGoals} ${nm(f.awayCode)} (Group ${f.group})`); }
+    }
+    const upcoming=byKickoff.filter(f=>!groupResults[f.id]&&!liveIds.has(f.id)&&ms(f)>=now);
+    if(upcoming.length){
+      const nextDay=localDayKey(new Date(upcoming[0].kickoff));
+      const nextDayFx=upcoming.filter(f=>localDayKey(new Date(f.kickoff))===nextDay);
+      lines.push(`NEXT UP (${longDate(upcoming[0].kickoff)}):`);
+      for(const f of nextDayFx){ lines.push(`- ${nm(f.homeCode)} vs ${nm(f.awayCode)} at ${formatKickoff(f.kickoff).time} (Group ${f.group}, ${f.venue})`); }
+    }
   }
-  if(upcoming.length){
-    lines.push("STILL TO COME TODAY:");
-    for(const f of upcoming){ lines.push(`- ${nm(f.homeCode)} vs ${nm(f.awayCode)} at ${formatKickoff(f.kickoff).time} (Group ${f.group}, ${f.venue})`); }
-  }
+
   const standings:string[]=[];
   for(const L of GROUP_LETTERS){
     const s=computeStandings(L,groupResults);
@@ -2210,6 +2243,15 @@ function buildDigestFacts(groupResults:Record<string,ScoreResult>, liveGames:Liv
   }
   if(standings.length){ lines.push("CURRENT GROUP STANDINGS:"); lines.push(...standings); }
   return lines.join("\n");
+}
+
+// Stable hash of the facts (minus the live clock, which ticks every poll) so a
+// repeat load with unchanged state reuses the cached digest, but a new result or
+// live-score change regenerates it.
+function digestCacheKey(facts:string):string{
+  const stable=facts.replace(/\((?:\d+'|\d+\+\d+'|HT|Halftime)[^)]*,/g,"(LIVE,");
+  let h=5381; for(let i=0;i<stable.length;i++) h=((h<<5)+h+stable.charCodeAt(i))|0;
+  return `wc-digest:${h>>>0}`;
 }
 
 function Typewriter({text,speed=16}:{text:string;speed?:number}){
@@ -2230,16 +2272,17 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
   const [status,setStatus]=useState<"idle"|"loading"|"error">("idle");
   const [err,setErr]=useState("");
   const facts=useMemo(()=>buildDigestFacts(groupResults,liveGames),[groupResults,liveGames]);
-  const factsRef=useRef(facts); useEffect(()=>{ factsRef.current=facts; },[facts]);
 
   const generate=async(force:boolean)=>{
-    const key=`wc-digest:${localDayKey(new Date())}`;
+    const key=digestCacheKey(facts);
+    // Repeat load with unchanged state → serve cache (no API call). New result or
+    // live-score change → key differs → regenerate.
     if(!force){
-      try{ const c=localStorage.getItem(key); if(c){ setText(JSON.parse(c).text); return; } }catch{ /* ignore */ }
+      try{ const c=localStorage.getItem(key); if(c){ setText(JSON.parse(c).text); setStatus("idle"); return; } }catch{ /* ignore */ }
     }
     setStatus("loading"); setErr("");
     try{
-      const r=await fetch(DIGEST_ENDPOINT,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({facts:factsRef.current})});
+      const r=await fetch(DIGEST_ENDPOINT,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({facts})});
       if(!r.ok){
         let parts:string[]=[]; try{ const j=await r.json(); parts=[j.error,j.detail].filter(Boolean); }catch{ /* ignore */ }
         throw new Error(`HTTP ${r.status}${parts.length?` — ${parts.join(" · ").slice(0,220)}`:""}`);
@@ -2252,10 +2295,12 @@ function DigestPanel({groupResults,liveGames,matchesPlayed}:{
     }catch(e){ setErr(e instanceof Error?e.message:String(e)); setStatus("error"); }
   };
 
-  const hasData=matchesPlayed>0||liveGames.length>0;
-  useEffect(()=>{ if(hasData) generate(false); /* once data is available */ },[hasData]); // eslint-disable-line
+  // Always show the digest — there's always something to say (today's games, or a
+  // recap + what's next). Regenerate whenever the state (facts) changes.
+  const hasData=matchesPlayed>0||liveGames.length>0||ALL_GROUP_MATCHES.some(f=>!groupResults[f.id]);
+  useEffect(()=>{ if(hasData) generate(false); },[facts,hasData]); // eslint-disable-line
 
-  if(!hasData) return null; // nothing to summarize yet
+  if(!hasData) return null; // tournament over — nothing left to preview
   return (
     <div className="wc-digest">
       <div className="wc-digest-head">
