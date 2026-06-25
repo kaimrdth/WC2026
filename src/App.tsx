@@ -833,21 +833,28 @@ function StarRating({stars}:{stars:number}) {
 // Depth rank from a position label (GK at the back → forwards up front). Used to band
 // players into formation rows regardless of the source array's order (ESPN lineups
 // aren't reliably ordered, so slicing raw would drop a winger into the defensive line).
+// Handles both standard abbreviations (CB, RW, CDM, GK, ST) and ESPN's (G, CD, AM-R, F).
 function posRank(pos:string):number{
-  const p=(pos||"").toUpperCase();
-  if(p.includes("GK")) return 0;
+  // ESPN encodes side as a "-R"/"-L" suffix (AM-R, CD-L); strip it for classification.
+  const p=(pos||"").toUpperCase().replace(/[-\s]?[LR]$/,"");
+  if(p==="G"||p.includes("GK")) return 0;                                           // goalkeeper
   if(p.includes("WB")) return 15;                                                   // wing-backs
-  if(p.endsWith("B")||p==="SW"||p==="D") return 10;                                 // CB/RB/LB/sweeper
+  if(p==="CD"||p==="D"||p.endsWith("B")||p==="SW") return 10;                       // CB/CD/RB/LB/sweeper
   if(p.includes("DM")) return 20;                                                   // defensive mid
   if(p.includes("AM")) return 40;                                                   // attacking mid
-  if(p.includes("ST")||p.endsWith("F")||p.includes("FW")||p.includes("SS")||p.includes("W")) return 50; // wings & forwards
+  if(p==="F"||p.includes("ST")||p.endsWith("F")||p.includes("FW")||p.includes("SS")||p.includes("W")) return 50; // wings & forwards
   if(p.includes("M")) return 30;                                                    // central/wide mid
   return 35;
 }
-// Horizontal placement within a row: left-sided positions to the left, right to the right.
+// Horizontal placement within a row. Side is a "-R"/"-L" suffix (ESPN) or an L/R prefix
+// (standard): left-sided to the left, right-sided to the right, centrals in the middle.
 function posSide(pos:string):number{
-  const c=(pos||"").toUpperCase()[0];
-  return c==="L"?-1:c==="R"?1:0;
+  const p=(pos||"").toUpperCase();
+  if(/[-\s]?R$/.test(p)) return 1;
+  if(/[-\s]?L$/.test(p)) return -1;
+  if(p[0]==="L") return -1;
+  if(p[0]==="R") return 1;
+  return 0;
 }
 
 function PitchDiagram({formation,xi}:{formation:string;xi:Player[]}) {
@@ -864,7 +871,8 @@ function PitchDiagram({formation,xi}:{formation:string;xi:Player[]}) {
     <div className="wc-pitch">
       <div className="wc-pitch-circle"/><div className="wc-pitch-halfway"/>
       {rows.map((row,rowIdx)=>{
-        const top=numRows>1?90-(rowIdx/(numRows-1))*80:50;
+        // Keep the bottom row off the edge so the GK's name/club isn't clipped.
+        const top=numRows>1?82-(rowIdx/(numRows-1))*72:50;
         return (
           <div className="wc-pitch-row" style={{top:`${top}%`}} key={rowIdx}>
             {row.map((p,i)=>{
