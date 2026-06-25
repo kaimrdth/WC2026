@@ -710,30 +710,61 @@ function nextFixtureFor(f:KoFixture):{fixture:KoFixture;side:"home"|"away"}|null
   }
   return null;
 }
-// Resolve a slot to a concrete team, recursively projecting the favoured side of any
-// feeder match (winner-of-X slots) so downstream opponents read as real teams.
-function resolveSlotDeep(slot:string, standings:Record<string,StandingRow[]>, depth=0):KoSide{
-  const base=resolveKoSlot(slot,standings);
-  if(base.team||depth>6) return base;
+// Find the feeder fixture that decides a "Winner of X" slot, if any.
+function feederFixture(slot:string):KoFixture|null{
   for(const [re,round] of WINNER_SLOT_RE){
     const m=slot.match(re);
-    if(m){
-      const f=KO_FIXTURES.find(x=>x.round===round&&x.n===Number(m[1]));
-      if(f) return projectWinner(f,standings,depth+1);
-    }
+    if(m) return KO_FIXTURES.find(x=>x.round===round&&x.n===Number(m[1])) ?? null;
   }
+  return null;
+}
+// Resolve a slot to a concrete team. For an undecided "Winner of X" slot we project the
+// favoured side — unless the viewer has forced a hypothetical winner via `picks`.
+type Picks=Record<string,string>; // fixtureId → winning team code (user "what-if")
+function resolveSlotDeep(slot:string, standings:Record<string,StandingRow[]>, picks:Picks={}, depth=0):KoSide{
+  const base=resolveKoSlot(slot,standings);
+  if(base.team||depth>6) return base;
+  const f=feederFixture(slot);
+  if(f) return projectWinner(f,standings,picks,depth+1);
   return base;
 }
-function projectWinner(f:KoFixture, standings:Record<string,StandingRow[]>, depth=0):KoSide{
-  const h=resolveSlotDeep(f.homeSlot,standings,depth);
-  const a=resolveSlotDeep(f.awaySlot,standings,depth);
+function projectWinner(f:KoFixture, standings:Record<string,StandingRow[]>, picks:Picks={}, depth=0):KoSide{
+  const h=resolveSlotDeep(f.homeSlot,standings,picks,depth);
+  const a=resolveSlotDeep(f.awaySlot,standings,picks,depth);
+  const forced=picks[f.id];
+  if(forced){
+    if(h.team?.code===forced) return h;
+    if(a.team?.code===forced) return a;
+  }
   if(h.team&&a.team) return h.team.rating>=a.team.rating?h:a;
   return h.team?h:a;
 }
-interface PathStep{ fixture:KoFixture; opponent:KoSide; projected:boolean; }
+// Every concrete team that could still arrive in a slot, given current standings.
+function slotCandidates(slot:string, standings:Record<string,StandingRow[]>, depth=0):Team[]{
+  const base=resolveKoSlot(slot,standings);
+  if(base.team) return [base.team as Team];
+  if(depth>6) return [];
+  const f=feederFixture(slot);
+  if(!f) return [];
+  const seen=new Set<string>(); const out:Team[]=[];
+  for(const t of [...slotCandidates(f.homeSlot,standings,depth+1),...slotCandidates(f.awaySlot,standings,depth+1)]){
+    if(!seen.has(t.code)){ seen.add(t.code); out.push(t); }
+  }
+  return out;
+}
+// Force `teamCode` to win its way into `slot`, recording a pick at each feeder fixture
+// along its branch (so the hypothetical propagates through the projection).
+function forceWinnerInto(slot:string, teamCode:string, standings:Record<string,StandingRow[]>, picks:Picks){
+  const f=feederFixture(slot); if(!f) return;
+  picks[f.id]=teamCode;
+  for(const child of [f.homeSlot,f.awaySlot]){
+    if(slotCandidates(child,standings).some(t=>t.code===teamCode)){ forceWinnerInto(child,teamCode,standings,picks); break; }
+  }
+}
+interface PathStep{ fixture:KoFixture; oppSlot:string; opponent:KoSide; candidates:Team[]; projected:boolean; }
 // The chain of knockout games a team would play if it finishes 1st ("W") or 2nd ("R")
 // in its group: entry R32 fixture, then each round's winner-fixture up to the final.
-function buildTeamPath(code:string, scenario:"W"|"R", standings:Record<string,StandingRow[]>):PathStep[]{
+function buildTeamPath(code:string, scenario:"W"|"R", standings:Record<string,StandingRow[]>, picks:Picks={}):PathStep[]{
   const team=TEAM_BY_CODE[code]; if(!team) return [];
   const slot=scenario==="W"?R32_WINNER_SLOT[team.group]:R32_RUNNERUP_SLOT[team.group];
   if(!slot) return [];
@@ -742,7 +773,12 @@ function buildTeamPath(code:string, scenario:"W"|"R", standings:Record<string,St
   while(cur){
     const oppSlot=cur.side==="home"?cur.fixture.awaySlot:cur.fixture.homeSlot;
     const direct=/^Group \w+ (Winner|2nd Place)$/.test(oppSlot)||!!TEAM_BY_NAME[oppSlot];
-    steps.push({ fixture:cur.fixture, opponent:resolveSlotDeep(oppSlot,standings), projected:cur.fixture.round!=="R32"||!direct });
+    steps.push({
+      fixture:cur.fixture, oppSlot,
+      opponent:resolveSlotDeep(oppSlot,standings,picks),
+      candidates:slotCandidates(oppSlot,standings),
+      projected:cur.fixture.round!=="R32"||!direct,
+    });
     cur=nextFixtureFor(cur.fixture);
   }
   return steps;
@@ -1490,18 +1526,27 @@ function KnockoutView({groupResults,onSelectTeam}:{groupResults:Record<string,Sc
 
 
 const ROUND_ICON:Record<string,ReactNode>={F:<Trophy size={13}/>,"3P":<Medal size={13}/>};
-function PathStepRow({step,picked,last,onSelectTeam}:{step:PathStep;picked:Team;last:boolean;onSelectTeam:(c:string)=>void}){
+function PathStepRow({step,picked,last,forced,onSelectTeam,onPickOpponent}:{
+  step:PathStep;picked:Team;last:boolean;forced:boolean;
+  onSelectTeam:(c:string)=>void;onPickOpponent:(slot:string,code:string)=>void;
+}){
   const f=step.fixture;
   const k=formatKickoff(f.kickoff);
   const opp=step.opponent.team;
   const seed=seedLabel(step.opponent.team);
+  // More than one team can still reach this slot → let the viewer pick a what-if opponent.
+  const choices=step.candidates.length>1
+    ? [...step.candidates].sort((a,b)=>b.rating-a.rating)
+    : [];
   return (
     <div className={`wc-path-step${last?" wc-path-step-final":""}`}>
       <div className="wc-path-rail"><span className="wc-path-dot">{ROUND_ICON[f.round]??null}</span></div>
       <div className="wc-path-card">
         <div className="wc-path-card-head">
           <span className="wc-path-round">{KO_ROUND_LABEL[f.round]}</span>
-          {step.projected&&<span className="wc-path-proj">projected</span>}
+          {forced
+            ? <span className="wc-path-proj wc-path-whatif">what-if</span>
+            : step.projected&&<span className="wc-path-proj">projected</span>}
         </div>
         <div className="wc-path-match">
           <span className="wc-path-side wc-path-me"><Flag code={picked.code} className="wc-chip-flag"/> {picked.name}</span>
@@ -1513,22 +1558,40 @@ function PathStepRow({step,picked,last,onSelectTeam}:{step:PathStep;picked:Team;
               </button>
             : <span className="wc-path-side wc-path-opp wc-path-tbd">{step.opponent.label}</span>}
         </div>
+        {choices.length>0&&(
+          <label className="wc-path-pick">
+            <span className="wc-path-pick-k">What if the opponent is</span>
+            <select className="wc-path-pick-sel" value={opp?.code ?? ""}
+              onChange={e=>onPickOpponent(step.oppSlot,e.target.value)}>
+              {choices.map(t=><option key={t.code} value={t.code}>{t.name}</option>)}
+            </select>
+          </label>
+        )}
         <div className="wc-path-meta">{k.date} · {k.time} · {f.venue}, {f.city}</div>
       </div>
     </div>
   );
 }
 
-function PathView({groupResults,onSelectTeam,focusTeam}:{
-  groupResults:Record<string,ScoreResult>;onSelectTeam:(code:string)=>void;focusTeam:{code:string;k:number}|null;
+function PathView({groupResults,liveByFixture,onSelectTeam,focusTeam}:{
+  groupResults:Record<string,ScoreResult>;liveByFixture:Record<string,LiveGame>;
+  onSelectTeam:(code:string)=>void;focusTeam:{code:string;k:number}|null;
 }){
   const [picked,setPicked]=useState<string|null>(null);
   const [scenario,setScenario]=useState<"W"|"R">("W");
+  const [picks,setPicks]=useState<Picks>({}); // hypothetical knockout winners
+  // Fold in-progress games into the standings so the path reflects results "as it stands".
+  const effectiveResults=useMemo(()=>{
+    const merged:Record<string,ScoreResult>={...groupResults};
+    for(const lg of Object.values(liveByFixture)) merged[lg.fixtureId]={homeGoals:lg.homeGoals,awayGoals:lg.awayGoals};
+    return merged;
+  },[groupResults,liveByFixture]);
+  const liveCount=Object.keys(liveByFixture).length;
   const standings=useMemo(()=>{
     const s:Record<string,StandingRow[]>={};
-    for(const L of GROUP_LETTERS) s[L]=computeStandings(L,groupResults);
+    for(const L of GROUP_LETTERS) s[L]=computeStandings(L,effectiveResults);
     return s;
-  },[groupResults]);
+  },[effectiveResults]);
 
   const team=picked?TEAM_BY_CODE[picked]:null;
   const table=team?standings[team.group]:null;
@@ -1536,8 +1599,14 @@ function PathView({groupResults,onSelectTeam,focusTeam}:{
 
   // default the scenario to where the team currently sits when a new team is picked
   useEffect(()=>{ if(idx>=0) setScenario(idx===1?"R":"W"); },[picked]); // eslint-disable-line
+  // changing team or scenario clears stale what-ifs (slots no longer apply)
+  useEffect(()=>{ setPicks({}); },[picked,scenario]);
 
-  const path=useMemo(()=>team?buildTeamPath(team.code,scenario,standings):[],[team,scenario,standings]);
+  const path=useMemo(()=>team?buildTeamPath(team.code,scenario,standings,picks):[],[team,scenario,standings,picks]);
+  const pickOpponent=(slot:string,code:string)=>{
+    setPicks(prev=>{ const next={...prev}; forceWinnerInto(slot,code,standings,next); return next; });
+  };
+  const hasPicks=Object.keys(picks).length>0;
   const myRow=team&&table?table[idx]:null;
   const teamFixtures=team?fixturesForGroup(team.group).filter(f=>f.homeCode===team.code||f.awayCode===team.code):[];
   const gamesLeft=teamFixtures.filter(f=>!groupResults[f.id]).length;
@@ -1546,7 +1615,7 @@ function PathView({groupResults,onSelectTeam,focusTeam}:{
     <div className="wc-path">
       <div className="wc-path-intro">
         <h2 className="wc-section-title">Pick a team — road to the final</h2>
-        <p className="wc-path-blurb">Choose a team to map its projected knockout path. Toggle between winning the group and finishing runner-up to see how the draw changes. Opponents are projected from the current standings and update as results come in.</p>
+        <p className="wc-path-blurb">Choose a team to map its knockout path. The route reflects the standings <strong>as they stand right now</strong>{liveCount>0?<> — including {liveCount} live game{liveCount===1?"":"s"}</>:null} and updates as results come in. Toggle winning the group vs finishing runner-up, and use the <em>what-if</em> dropdowns to swap in hypothetical future opponents.</p>
       </div>
 
       <div className="wc-path-pickwrap">
@@ -1595,14 +1664,17 @@ function PathView({groupResults,onSelectTeam,focusTeam}:{
           )}
 
           <div className="wc-path-scenario">
-            If <strong>{team.name}</strong> {scenario==="W"?<>win <strong>Group {team.group}</strong></>:<>finish <strong>runner-up in Group {team.group}</strong></>}, their road to the {KO_ROUND_LABEL.F} runs:
+            <span>If <strong>{team.name}</strong> {scenario==="W"?<>win <strong>Group {team.group}</strong></>:<>finish <strong>runner-up in Group {team.group}</strong></>}, their road to the {KO_ROUND_LABEL.F} runs:</span>
+            {hasPicks&&<button className="wc-path-reset" onClick={()=>setPicks({})}><RotateCcw size={12}/> Reset what-ifs</button>}
           </div>
 
           <div className="wc-path-steps">
             {path.length===0
               ? <div className="wc-path-empty">No bracket route mapped for this slot.</div>
               : path.map((s,i)=>(
-                  <PathStepRow key={s.fixture.id} step={s} picked={team} last={i===path.length-1} onSelectTeam={onSelectTeam}/>
+                  <PathStepRow key={s.fixture.id} step={s} picked={team} last={i===path.length-1}
+                    forced={!!picks[feederFixture(s.oppSlot)?.id ?? ""]}
+                    onSelectTeam={onSelectTeam} onPickOpponent={pickOpponent}/>
                 ))}
           </div>
         </div>
@@ -2397,7 +2469,7 @@ export default function App() {
           <KnockoutView groupResults={groupResults} onSelectTeam={goToTeam}/>
         )}
         {stage==="path"&&(
-          <PathView groupResults={groupResults} onSelectTeam={goToTeam} focusTeam={focusTeam}/>
+          <PathView groupResults={groupResults} liveByFixture={liveByFixture} onSelectTeam={goToTeam} focusTeam={focusTeam}/>
         )}
       </main>
 
@@ -2963,8 +3035,15 @@ const CSS = `
 .wc-path-status-line{color:var(--chalk-dim);font-size:.8rem;margin-top:.15rem;}
 .wc-path-switch{flex-shrink:0;}
 .wc-path-warn{display:flex;align-items:flex-start;gap:.45rem;background:var(--gold-soft);border:1px solid var(--gold);border-radius:10px;padding:.55rem .7rem;color:var(--chalk);font-size:.78rem;line-height:1.45;margin-top:.9rem;}
-.wc-path-scenario{color:var(--chalk-dim);font-size:.88rem;margin:1rem 0 .8rem;}
+.wc-path-scenario{color:var(--chalk-dim);font-size:.88rem;margin:1rem 0 .8rem;display:flex;justify-content:space-between;align-items:center;gap:.75rem;flex-wrap:wrap;}
 .wc-path-scenario strong{color:var(--chalk);}
+.wc-path-reset{display:inline-flex;align-items:center;gap:.3rem;background:transparent;color:var(--chalk-dim);border:1px solid var(--pitch-line);border-radius:999px;padding:.25rem .6rem;font-size:.72rem;font-weight:600;cursor:pointer;flex-shrink:0;}
+.wc-path-reset:hover{color:var(--gold);border-color:var(--gold);}
+.wc-path-whatif{color:var(--pitch-deep);background:var(--gold);border-color:var(--gold);}
+.wc-path-pick{display:flex;align-items:center;gap:.45rem;margin-top:.5rem;flex-wrap:wrap;}
+.wc-path-pick-k{font-size:.68rem;color:var(--chalk-dim);text-transform:uppercase;letter-spacing:.04em;font-weight:700;}
+.wc-path-pick-sel{background:var(--pitch-card);color:var(--chalk);border:1px solid var(--pitch-line);border-radius:7px;padding:.2rem .4rem;font-size:.8rem;font-weight:600;font-family:inherit;cursor:pointer;}
+.wc-path-pick-sel:hover{border-color:var(--gold);}
 .wc-path-steps{position:relative;}
 .wc-path-step{display:grid;grid-template-columns:1.7rem 1fr;gap:.7rem;}
 .wc-path-rail{display:flex;flex-direction:column;align-items:center;}
