@@ -830,10 +830,35 @@ function StarRating({stars}:{stars:number}) {
   );
 }
 
+// Depth rank from a position label (GK at the back → forwards up front). Used to band
+// players into formation rows regardless of the source array's order (ESPN lineups
+// aren't reliably ordered, so slicing raw would drop a winger into the defensive line).
+function posRank(pos:string):number{
+  const p=(pos||"").toUpperCase();
+  if(p.includes("GK")) return 0;
+  if(p.includes("WB")) return 15;                                                   // wing-backs
+  if(p.endsWith("B")||p==="SW"||p==="D") return 10;                                 // CB/RB/LB/sweeper
+  if(p.includes("DM")) return 20;                                                   // defensive mid
+  if(p.includes("AM")) return 40;                                                   // attacking mid
+  if(p.includes("ST")||p.endsWith("F")||p.includes("FW")||p.includes("SS")||p.includes("W")) return 50; // wings & forwards
+  if(p.includes("M")) return 30;                                                    // central/wide mid
+  return 35;
+}
+// Horizontal placement within a row: left-sided positions to the left, right to the right.
+function posSide(pos:string):number{
+  const c=(pos||"").toUpperCase()[0];
+  return c==="L"?-1:c==="R"?1:0;
+}
+
 function PitchDiagram({formation,xi}:{formation:string;xi:Player[]}) {
   const lines=[1,...formation.split("-").map(Number)];
+  // Band by actual position, not array order, then place each row left→right by side.
+  const ordered=[...xi].sort((a,b)=>posRank(a.pos)-posRank(b.pos));
   let idx=0;
-  const rows=lines.map(size=>{const row=xi.slice(idx,idx+size);idx+=size;return row;});
+  const rows=lines.map(size=>{
+    const row=ordered.slice(idx,idx+size).sort((a,b)=>posSide(a.pos)-posSide(b.pos));
+    idx+=size; return row;
+  });
   const numRows=rows.length;
   return (
     <div className="wc-pitch">
@@ -2967,7 +2992,7 @@ const CSS = `
 .wc-pitch-halfway{position:absolute;top:50%;left:0;right:0;height:1px;background:var(--pitch-line);}
 .wc-pitch-row{position:absolute;left:0;right:0;transform:translateY(-50%);}
 .wc-pitch-player{position:absolute;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;width:3.5rem;}
-.wc-pitch-dot{width:1.65rem;height:1.65rem;border-radius:50%;background:var(--gold);color:var(--pitch-deep);display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;border:2px solid var(--chalk);}
+.wc-pitch-dot{width:1.75rem;height:1.75rem;border-radius:50%;background:var(--gold);color:var(--pitch-deep);display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:.56rem;font-weight:700;border:2px solid var(--chalk);white-space:nowrap;line-height:1;letter-spacing:-.02em;flex-shrink:0;}
 .wc-pitch-dot-empty{background:var(--pitch-deep);color:var(--chalk-dim);border-color:var(--pitch-line);}
 .wc-pitch-name{font-size:.58rem;color:var(--chalk);text-align:center;margin-top:.18rem;line-height:1.1;}
 .wc-pitch-club{font-size:.5rem;color:var(--chalk-dim);text-align:center;line-height:1.1;}
