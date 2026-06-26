@@ -2351,6 +2351,7 @@ function LiveBanner({games,onOpen}:{
 // ── AI daily digest (Gemini via the Netlify function proxy) ───────────────────
 const DIGEST_ENABLED = true;
 const DIGEST_ENDPOINT = "/.netlify/functions/digest";
+const FORCE_COOLDOWN_MS = 15 * 60 * 1000; // each browser can manually refresh at most this often
 const localDayKey = (d:Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 // The digest only generates while the tournament is on. After the day the final is played,
 // it switches to a fixed honorarium card and stops calling the model.
@@ -2543,6 +2544,13 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
     if(!force){
       try{ const c=localStorage.getItem(key); if(c){ setText(JSON.parse(c).text); setStatus("idle"); return; } }catch{ /* ignore */ }
     }
+    if(force){
+      // Per-browser cooldown so the refresh button can't be hammered (each press is a paid call).
+      let last=0; try{ last=Number(localStorage.getItem("wc-digest-forced-at")||0); }catch{ /* ignore */ }
+      const wait=FORCE_COOLDOWN_MS-(Date.now()-last);
+      if(wait>0){ setNote(`just refreshed — try again in ${Math.ceil(wait/60000)} min`); setGen(g=>g+1); return; }
+      try{ localStorage.setItem("wc-digest-forced-at",String(Date.now())); }catch{ /* ignore */ }
+    }
     if(pendingRef.current) return; // a request is already in flight
     pendingRef.current=true;
     setStatus("loading"); setErr("");
@@ -2563,7 +2571,7 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
       if(!t) throw new Error("empty response from model");
       showDigest(t);
       // On a manual refresh, always report what came back so it's never a silent no-op.
-      if(force) setNote(d.cached?"served from cache — redeploy the function to force fresh":d.stale?"rate-limited — showing the latest available":"fresh ✓");
+      if(force) setNote(d.cached==="recent"?"refreshed moments ago — showing the latest":d.cached?"served from cache — redeploy the function to force fresh":d.stale?"rate-limited — showing the latest available":"fresh ✓");
       if(!d.stale){ try{ localStorage.setItem(key,JSON.stringify({text:t})); }catch{ /* ignore */ } } // don't cache stale under this state's key
     }catch(e){
       // Network/parse failure → same best-effort fallback.

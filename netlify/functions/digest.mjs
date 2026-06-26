@@ -23,6 +23,7 @@ const MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
 const RETRYABLE = new Set([500, 503]);
 
 const MEM_TTL = 10 * 60 * 1000; // in-process cache freshness
+const FORCE_FRESH_WINDOW_MS = 10 * 60 * 1000; // a forced refresh reuses a generation this new (shared across clients)
 const mem = new Map();          // hash → { text, ts } (survives warm invocations)
 const inflight = new Map();     // hash → Promise<result> (coalesce concurrent calls)
 let lastGoodMem = null;         // most recent successful digest (memory fallback)
@@ -154,6 +155,13 @@ export default async (req) => {
   // then overwrites the caches. Normal requests check L1/L2 and coalesce first.
   let r;
   if (force) {
+    // Even a forced refresh reuses a very recent generation of THIS exact state, so several
+    // clients refreshing in the same window share one Gemini call instead of each paying.
+    const recent = mem.get(h) || (await blobGet(store, `d_${h}`));
+    if (recent?.text && recent.ts && Date.now() - recent.ts < FORCE_FRESH_WINDOW_MS) {
+      mem.set(h, recent);
+      return json({ text: recent.text, cached: "recent" });
+    }
     r = await generate(facts, key, true); // fresh re-roll
   } else {
     // L1 — in-process memory (instant, free, no Gemini call).
