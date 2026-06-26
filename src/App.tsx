@@ -1716,12 +1716,13 @@ function BracketCard({m,result,live,onOpen}:{
     return (
       <div className={`wc-br2-team${t&&win===t.code?" wc-br2-win":""}${t?"":" wc-br2-tbd"}`}>
         {t?<Flag code={t.code} className="wc-br2-flag"/>:<span className="wc-br2-flag-x"/>}
-        <span className="wc-br2-name">{t?t.name:side.label}</span>
+        <span className="wc-br2-name">{t?t.code:"TBD"}</span>
         {g!=null&&<span className="wc-br2-score">{g}{pk!=null?<span className="wc-br2-pk"> ({pk})</span>:null}</span>}
       </div>
     );
   };
-  const foot=result?"Full time":live?<span className="wc-br2-live"><span className="wc-live-dot"/>{live.clock||"LIVE"}</span>:formatKickoff(f.kickoff).date;
+  const shortDate=(()=>{const d=new Date(f.kickoff);return isNaN(d.getTime())?"":d.toLocaleDateString(undefined,{month:"short",day:"numeric"});})();
+  const foot=result?"FT":live?<span className="wc-br2-live"><span className="wc-live-dot"/>{live.clock||"LIVE"}</span>:shortDate;
   return (
     <button className="wc-br2-card" onClick={()=>onOpen(m)} title={m.home.team&&m.away.team?`${m.home.team.name} v ${m.away.team.name}`:"Match"}>
       <div className="wc-br2-teams">{teamRow(m.home)}{teamRow(m.away)}</div>
@@ -3641,26 +3642,27 @@ const CSS = `
 .wc-badge-out{background:transparent;color:var(--chalk-dim);border:1px solid var(--pitch-line);border-radius:999px;padding:.12rem .5rem;font-size:.62rem;font-weight:600;white-space:nowrap;}
 
 /* knockout */
-/* ── Two-sided knockout bracket (compact cards + elbow connectors) ── */
-.wc-br2-wrap{overflow-x:auto;padding-bottom:.6rem;}
-.wc-br2{display:flex;min-width:max-content;align-items:stretch;--g:.85rem;--ln:rgba(244,241,232,.22);}
-.wc-br2-col{display:flex;flex-direction:column;flex:0 0 auto;width:172px;}
-.wc-br2-head{height:1.7rem;display:flex;align-items:center;justify-content:center;font-family:'Anton',sans-serif;letter-spacing:.03em;font-size:.74rem;text-transform:uppercase;color:var(--gold);}
+/* ── Two-sided knockout bracket (compact code cards + elbow connectors) ── */
+.wc-br2-wrap{overflow-x:auto;padding-bottom:.4rem;scrollbar-width:none;-ms-overflow-style:none;}
+.wc-br2-wrap::-webkit-scrollbar{display:none;}      /* hide the system scrollbar (still scrollable) */
+.wc-br2{display:flex;min-width:max-content;margin:0 auto;align-items:stretch;--g:.7rem;--ln:rgba(244,241,232,.22);}
+.wc-br2-col{display:flex;flex-direction:column;flex:0 0 auto;width:108px;}
+.wc-br2-head{height:1.6rem;display:flex;align-items:center;justify-content:center;font-family:'Anton',sans-serif;letter-spacing:.02em;font-size:.62rem;text-transform:uppercase;color:var(--gold);text-align:center;}
 .wc-br2-body{flex:1;display:flex;flex-direction:column;}
-.wc-br2-match{flex:1;display:flex;flex-direction:column;justify-content:center;position:relative;padding:.3rem var(--g);min-height:54px;}
+.wc-br2-match{flex:1;display:flex;flex-direction:column;justify-content:center;position:relative;padding:.22rem var(--g);min-height:44px;}
 /* compact card */
-.wc-br2-card{position:relative;z-index:1;display:flex;flex-direction:column;width:100%;text-align:left;background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:8px;padding:.3rem .4rem;color:var(--chalk);font:inherit;cursor:pointer;overflow:hidden;}
+.wc-br2-card{position:relative;z-index:1;display:flex;flex-direction:column;width:100%;text-align:left;background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:7px;padding:.28rem .4rem;color:var(--chalk);font:inherit;cursor:pointer;overflow:hidden;}
 .wc-br2-card:hover{border-color:var(--gold);}
-.wc-br2-teams{display:flex;flex-direction:column;gap:.12rem;}
-.wc-br2-team{display:flex;align-items:center;gap:.35rem;font-size:.74rem;font-weight:600;min-width:0;}
+.wc-br2-teams{display:flex;flex-direction:column;gap:.15rem;}
+.wc-br2-team{display:flex;align-items:center;gap:.35rem;font-size:.78rem;min-width:0;}
 .wc-br2-team.wc-br2-win{color:var(--gold);}
-.wc-br2-team.wc-br2-tbd{color:var(--chalk-dim);font-style:italic;font-weight:500;}
-.wc-br2-flag{width:1rem;height:1rem;flex-shrink:0;}
-.wc-br2-flag-x{width:1rem;height:1rem;border-radius:2px;background:var(--pitch-line);flex-shrink:0;}
-.wc-br2-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wc-br2-team.wc-br2-tbd{color:var(--chalk-dim);}
+.wc-br2-flag{width:1.05rem;height:1.05rem;flex-shrink:0;}
+.wc-br2-flag-x{width:1.05rem;height:1.05rem;border-radius:2px;background:var(--pitch-line);flex-shrink:0;}
+.wc-br2-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;font-weight:700;letter-spacing:.02em;}
 .wc-br2-score{font-family:'JetBrains Mono',monospace;font-weight:700;flex-shrink:0;}
 .wc-br2-pk{font-size:.6rem;color:var(--chalk-dim);}
-.wc-br2-foot{margin-top:.2rem;font-size:.58rem;color:var(--chalk-dim);letter-spacing:.02em;}
+.wc-br2-foot{margin-top:.18rem;font-size:.56rem;color:var(--chalk-dim);letter-spacing:.02em;}
 .wc-br2-live{display:inline-flex;align-items:center;gap:.25rem;color:#ff8a8a;font-weight:700;}
 /* connectors — LEFT side: outgoing right, incoming left */
 .wc-br2-l.wc-br2-src .wc-br2-match::after{content:"";position:absolute;right:0;width:var(--g);box-sizing:border-box;border-right:2px solid var(--ln);}
