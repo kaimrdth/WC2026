@@ -503,9 +503,16 @@ async function fetchMatchDetail(eventId:string):Promise<MatchDetail> {
   const homeTeam = home ? parseRoster(home) : null;
   const awayTeam = away ? parseRoster(away) : null;
 
+  // Map EVERY name variant a team might appear as in commentary (United States / USA /
+  // USMNT / etc.) to its side — matching only the roster's displayName silently drops goals.
   const nameToSide:Record<string,"home"|"away"> = {};
-  if (homeTeam?.name) nameToSide[homeTeam.name] = "home";
-  if (awayTeam?.name) nameToSide[awayTeam.name] = "away";
+  const addNames = (team:any, side:"home"|"away") => {
+    for (const key of ["displayName","shortDisplayName","name","abbreviation","location","nickname"]) {
+      const v = team?.[key]; if (v) nameToSide[String(v).trim()] = side;
+    }
+  };
+  addNames(home?.team, "home");
+  addNames(away?.team, "away");
   const flip = (s:"home"|"away") => s==="home"?"away":"home";
 
   const events:TimelineEvent[] = [];
