@@ -1427,7 +1427,7 @@ function GroupCard({letter,standings,groupResults,qualifiers,goalsByFixture,onSe
         <thead><tr><th></th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead>
         <tbody>
           {standings.map((t,i)=>{
-            const cls=i<2?"wc-row-q":(i===2&&bestThirdCodes?.has(t.code))?"wc-row-third":"";
+            const cls=i<2?"wc-row-q":(i===2&&bestThirdCodes?.has(t.code))?"wc-row-third":complete?"wc-row-out":"";
             return (
               <tr key={t.code} className={cls}>
                 <td className="wc-pos">{i+1}</td>
@@ -3354,7 +3354,7 @@ const CSS = `
 /* Qualification indicators — fixed colours so they stay meaningful under team theming. */
 .wc-row-q{box-shadow:inset 3px 0 0 #2ea043;background:rgba(46,160,67,.12);}
 .wc-row-third{box-shadow:inset 3px 0 0 #e0a52e;background:rgba(224,165,46,.12);}
-.wc-row-out{opacity:.7;}
+.wc-row-out{box-shadow:inset 3px 0 0 #d73a49;background:rgba(215,58,73,.13);}
 .wc-row-me{outline:1px solid rgba(244,241,232,.35);outline-offset:-1px;font-weight:700;}
 .wc-team-group{margin:.6rem 0 .2rem;}
 .wc-team-group-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem;}

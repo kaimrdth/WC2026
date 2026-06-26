@@ -16,7 +16,7 @@
 
 import { getStore } from "@netlify/blobs";
 
-const MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
+const MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 // Retry rapidly only on server overload. 429 (rate limit) is NOT retried in a tight
 // loop — hammering it just makes the rate limit worse; we fall through to the next
 // model and surface the reason instead.
