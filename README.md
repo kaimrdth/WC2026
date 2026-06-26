@@ -26,6 +26,7 @@ Everything updates automatically from public data. No manual score entry — thi
 - [How it works](#how-it-works)
 - [Data sources](#data-sources)
 - [The views](#the-views)
+- [Interface polish](#interface-polish)
 - [ESPN-confirmed lineups](#espn-confirmed-lineups)
 - [AI daily digest](#ai-daily-digest)
 - [Run locally](#run-locally)
@@ -50,6 +51,7 @@ Everything updates automatically from public data. No manual score entry — thi
 | 📋 **Match detail** | Per-match lineups, formations, and a parsed goal/card/sub timeline. |
 | 🤖 **AI daily digest** | A short, narrated briefing of the day — today's games, or a recap of the last matchday plus what's next. |
 | 📈 **Stats** | Top scorers, cards, and tournament tallies derived from the live feed. |
+| 🎨 **Polish** | Neutral tournament shell, team-aware colour themes, live goal flourishes, and a tiny physics easter egg. |
 
 ---
 
@@ -131,7 +133,21 @@ sequenceDiagram
 | **Knockout** | The R32→Final bracket, projected then real. |
 | **Pick a Team** | Choose a team → see its projected path; toggle win-group vs runner-up; pick what-if opponents. |
 | **Stats** | Scorers, cards, tournament tallies. |
-| **Teams** | All 48 teams: profile, formation, narrative, captain, and confirmed/predicted XI. |
+| **Teams** | All 48 teams: profile, formation, narrative, captain, confirmed/predicted XI, and scroll-aware team theming for open cards. |
+
+---
+
+## Interface polish
+
+The default UI uses a neutral tournament palette so the data stays readable. In the
+Teams view, opening a team card themes the app with that team's colours; if multiple
+cards are open, scrolling between them hands the theme to the open card currently in
+view.
+
+There are a few lightweight motion details: live goal celebrations, animated status
+states, and a small hidden ball easter egg. The easter egg is intentionally nonessential,
+works with mouse or touch, respects reduced-motion preferences, and does not affect the
+tracker data or navigation.
 
 ---
 
