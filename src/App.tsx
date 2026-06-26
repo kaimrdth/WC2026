@@ -1645,9 +1645,15 @@ function GroupsView({groupResults,qualifiers,goalsByFixture,onSelectTeam,detailI
   ) as Record<string,StandingRow[]>,[groupResults]);
   // matches collapsed by default — a clean grid of 12 tables, far less dense
   const [expanded,setExpanded]=useState<Record<string,boolean>>({});
+  const [teamQuery,setTeamQuery]=useState("");
   const allShown=GROUP_LETTERS.every(l=>expanded[l]);
   const toggleAll=()=>setExpanded(Object.fromEntries(GROUP_LETTERS.map(l=>[l,!allShown])));
   const toggleOne=(l:string)=>setExpanded(p=>({...p,[l]:!p[l]}));
+  const teamHits=useMemo(()=>{
+    const q=teamQuery.trim().toLowerCase();
+    if(!q) return [];
+    return TEAMS.filter(t=>t.name.toLowerCase().includes(q)||t.code.toLowerCase().includes(q)).slice(0,6);
+  },[teamQuery]);
 
   // Deep-linked from the digest: jump to tables, highlight + scroll the group into view.
   const [flash,setFlash]=useState<string|null>(null);
@@ -1668,6 +1674,21 @@ function GroupsView({groupResults,qualifiers,goalsByFixture,onSelectTeam,detailI
         <div className="wc-view-switch">
           <button className={`wc-view-btn${view==="tables"?" wc-view-active":""}`} onClick={()=>setView("tables")}>Tables</button>
           <button className={`wc-view-btn${view==="schedule"?" wc-view-active":""}`} onClick={()=>setView("schedule")}>Schedule</button>
+        </div>
+        <div className="wc-group-team-search">
+          <input className="wc-group-team-input" type="search" placeholder="Search a team"
+            value={teamQuery} onChange={e=>setTeamQuery(e.target.value)} aria-label="Search a team"/>
+          {teamHits.length>0&&(
+            <div className="wc-group-team-results">
+              {teamHits.map(t=>(
+                <button key={t.code} className="wc-group-team-hit" onClick={()=>{ setTeamQuery(""); onSelectTeam(t.code); }}>
+                  <Flag code={t.code} className="wc-flag-sm"/>
+                  <span>{t.name}</span>
+                  <span className="wc-group-team-hit-meta">Group {t.group}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {view==="tables"&&(
           <button className="wc-btn-ghost-sm" onClick={toggleAll}>
@@ -3588,6 +3609,14 @@ const CSS = `
 
 /* groups grid */
 .wc-groups-bar{display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;margin-bottom:1rem;}
+.wc-group-team-search{position:relative;flex:1;min-width:190px;max-width:320px;}
+.wc-group-team-input{width:100%;background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:999px;padding:.42rem .8rem;color:var(--chalk);font:inherit;font-size:.78rem;}
+.wc-group-team-input::placeholder{color:var(--chalk-dim);}
+.wc-group-team-input:focus{outline:none;border-color:rgba(215,163,61,.55);box-shadow:0 0 0 2px rgba(215,163,61,.12);}
+.wc-group-team-results{position:absolute;z-index:20;left:0;right:0;top:calc(100% + .35rem);background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:10px;padding:.25rem;box-shadow:0 14px 32px rgba(0,0,0,.28);}
+.wc-group-team-hit{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:.45rem;background:transparent;border:none;border-radius:7px;color:var(--chalk);padding:.42rem .5rem;text-align:left;font-size:.78rem;}
+.wc-group-team-hit:hover{background:var(--gold-soft);}
+.wc-group-team-hit-meta{font-size:.62rem;color:var(--chalk-dim);white-space:nowrap;}
 .wc-view-switch{display:inline-flex;gap:.2rem;background:var(--pitch-deep);border:1px solid var(--pitch-line);border-radius:10px;padding:.22rem;}
 .wc-view-btn{background:transparent;border:none;color:var(--chalk-dim);border-radius:7px;padding:.4rem .9rem;font-size:.78rem;font-weight:700;}
 .wc-view-btn:hover{color:var(--chalk);}
