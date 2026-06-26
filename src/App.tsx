@@ -1689,6 +1689,10 @@ function PathView({groupResults,liveByFixture,onSelectTeam,focusTeam}:{
   useEffect(()=>{ if(idx>=0) setScenario(idx===1?"R":"W"); },[picked]); // eslint-disable-line
   // changing team or scenario clears stale what-ifs (slots no longer apply)
   useEffect(()=>{ setPicks({}); },[picked,scenario]);
+  // On mobile the result renders below the fold — scroll it into view when a team is picked.
+  const boardRef=useRef<HTMLDivElement|null>(null);
+  const pickRef=useRef<HTMLDivElement|null>(null);
+  useEffect(()=>{ if(picked) boardRef.current?.scrollIntoView({behavior:"smooth",block:"start"}); },[picked]);
 
   const path=useMemo(()=>team?buildTeamPath(team.code,scenario,standings,picks):[],[team,scenario,standings,picks]);
   const pickOpponent=(slot:string,code:string)=>{
@@ -1706,7 +1710,7 @@ function PathView({groupResults,liveByFixture,onSelectTeam,focusTeam}:{
         <p className="wc-path-blurb">Choose a team to map its knockout path. The route reflects the standings <strong>as they stand right now</strong>{liveCount>0?<> — including {liveCount} live game{liveCount===1?"":"s"}</>:null} and updates as results come in. Toggle winning the group vs finishing runner-up, and use the <em>what-if</em> dropdowns to swap in hypothetical future opponents.</p>
       </div>
 
-      <div className="wc-path-pickwrap">
+      <div className="wc-path-pickwrap" ref={pickRef}>
         {GROUP_LETTERS.map(L=>(
           <div key={L} className="wc-path-pickgroup">
             <div className="wc-path-pickhead">Group {L}</div>
@@ -1726,7 +1730,7 @@ function PathView({groupResults,liveByFixture,onSelectTeam,focusTeam}:{
       {!team&&<div className="wc-path-empty"><Ticket size={20}/> Pick a team above to trace its route to the final.</div>}
 
       {team&&myRow&&(
-        <div className="wc-path-board">
+        <div className="wc-path-board" ref={boardRef}>
           <div className="wc-path-status">
             <div className="wc-path-status-team">
               <Flag code={team.code} className="wc-flag-lg"/>
@@ -1765,6 +1769,10 @@ function PathView({groupResults,liveByFixture,onSelectTeam,focusTeam}:{
                     onSelectTeam={onSelectTeam} onPickOpponent={pickOpponent}/>
                 ))}
           </div>
+
+          <button className="wc-path-up" onClick={()=>pickRef.current?.scrollIntoView({behavior:"smooth",block:"start"})}>
+            <ArrowUp size={14}/> Pick another team
+          </button>
         </div>
       )}
       <FocusPickBridge focusTeam={focusTeam} onPick={setPicked}/>
@@ -3291,6 +3299,8 @@ const CSS = `
 .wc-path-scenario strong{color:var(--chalk);}
 .wc-path-reset{display:inline-flex;align-items:center;gap:.3rem;background:transparent;color:var(--chalk-dim);border:1px solid var(--pitch-line);border-radius:999px;padding:.25rem .6rem;font-size:.72rem;font-weight:600;cursor:pointer;flex-shrink:0;}
 .wc-path-reset:hover{color:var(--gold);border-color:var(--gold);}
+.wc-path-up{display:flex;width:fit-content;align-items:center;gap:.4rem;margin:.4rem auto 0;background:transparent;color:var(--chalk-dim);border:1px solid var(--pitch-line);border-radius:999px;padding:.4rem .9rem;font:inherit;font-size:.78rem;font-weight:600;cursor:pointer;}
+.wc-path-up:hover{color:var(--gold);border-color:var(--gold);}
 .wc-path-whatif{color:var(--pitch-deep);background:var(--gold);border-color:var(--gold);}
 .wc-path-pick{display:flex;align-items:center;gap:.45rem;margin-top:.5rem;flex-wrap:wrap;}
 .wc-path-pick-k{font-size:.68rem;color:var(--chalk-dim);text-transform:uppercase;letter-spacing:.04em;font-weight:700;}
