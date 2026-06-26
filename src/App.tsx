@@ -2467,6 +2467,15 @@ function fallbackDigest(groupResults:Record<string,ScoreResult>, liveGames:LiveG
   return out.join(" ");
 }
 
+// Client-side time-of-day greeting, prepended to the digest so it always reflects the
+// viewer's local time (the AI body is written greeting-free).
+function timeGreeting():string{
+  const h=new Date().getHours();
+  if(h>=5&&h<12) return "Good morning";
+  if(h>=12&&h<17) return "Good afternoon";
+  return "Good evening";
+}
+
 // ── Digest linkification ──────────────────────────────────────────────────────
 // Turn team names and "Group X" mentions in the digest prose into clickable links.
 const DIGEST_TEAM_BY_NAME:Record<string,string>=Object.fromEntries(TEAMS.map(t=>[t.name.toLowerCase(),t.code]));
@@ -2601,7 +2610,7 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
       </div>
       <p className="wc-digest-body">
         {text
-          ? <Typewriter key={gen} text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
+          ? <Typewriter key={gen} text={`${timeGreeting()} — ${text}`} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
           : status==="error"
             ? <span className="wc-digest-err">Couldn’t generate the digest — {err}. <button className="wc-digest-retry" onClick={()=>generate(true)}>Retry</button></span>
             : <span className="wc-digest-loading">Generating today’s briefing…</span>}
