@@ -1173,11 +1173,75 @@ function GroupMiniTable({team,standings,qualifiers,onSelectTeam,onSelectGroup}:{
 
 interface OpenTeamVisibility { code:string; ratio:number; center:number; }
 
-function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confirmed,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onOpenVisibility}:{
+// A team's knockout run: each round they've reached (or are about to), with the real
+// result + match details once played, a preview while upcoming, and a terminal outcome
+// (eliminated / runners-up / champions) once the run ends.
+const KO_RANK:Record<string,number>={R32:0,R16:1,QF:2,SF:3,"3P":4,F:4};
+function TeamKnockoutPath({code,ko,koResults,liveByFixture,detailIds,onOpenDetail,onPreviewKo,onSelectTeam}:{
+  code:string;ko:ResolvedKo[];koResults:Record<string,KoResult>;
+  liveByFixture:Record<string,LiveGame>;detailIds:Set<string>;
+  onOpenDetail:(id:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;onSelectTeam:(c:string)=>void;
+}){
+  const steps=ko.filter(m=>m.home.team?.code===code||m.away.team?.code===code)
+    .sort((a,b)=>(KO_RANK[a.fixture.round]??9)-(KO_RANK[b.fixture.round]??9));
+  if(!steps.length) return null;
+  const sideScore=(r:KoResult)=>{
+    const tg=r.homeCode===code?r.homeGoals:r.awayGoals, og=r.homeCode===code?r.awayGoals:r.homeGoals;
+    const pkT=r.homeCode===code?r.pkHome:r.pkAway, pkO=r.homeCode===code?r.pkAway:r.pkHome;
+    const tied=tg===og, won=tg>og||(tied&&(pkT??0)>(pkO??0));
+    return {tg,og,pkT,pkO,tied,won};
+  };
+  // Terminal outcome once there are no live/upcoming games left in the run.
+  const alive=steps.some(m=>!koResults[m.fixture.id]);
+  const lastPlayed=[...steps].reverse().find(m=>koResults[m.fixture.id]);
+  let summary:{label:string;cls:string}|null=null;
+  if(lastPlayed&&!alive){
+    const {won}=sideScore(koResults[lastPlayed.fixture.id]); const rd=lastPlayed.fixture.round;
+    if(rd==="F") summary=won?{label:"Champions 🏆",cls:"in"}:{label:"Runners-up",cls:"out"};
+    else if(rd==="3P") summary=won?{label:"3rd place",cls:"in"}:{label:"4th place",cls:"out"};
+    else if(!won) summary={label:`Out · ${KO_ROUND_LABEL[rd]}`,cls:"out"};
+  }
+  return (
+    <div className="wc-team-ko">
+      <div className="wc-team-ko-head"><span>Knockout run</span>{summary&&<span className={`wc-team-ko-tag wc-team-ko-tag-${summary.cls}`}>{summary.label}</span>}</div>
+      {steps.map(m=>{
+        const f=m.fixture, isHome=m.home.team?.code===code;
+        const opp=isHome?m.away.team:m.home.team, oppLabel=isHome?m.away.label:m.home.label;
+        const r=koResults[f.id], live=liveByFixture[f.id], canDetail=detailIds.has(f.id);
+        let action:ReactNode;
+        if(r){
+          const s=sideScore(r); const pk=s.tied&&(s.pkT!=null||s.pkO!=null)?` (${s.pkT??0}-${s.pkO??0}p)`:"";
+          action=<button className={`wc-team-ko-res${s.won?" win":" loss"}${canDetail?" wc-team-ko-link":""}`} onClick={canDetail?()=>onOpenDetail(f.id):undefined} disabled={!canDetail}>{s.won?"W":"L"} {s.tg}–{s.og}{pk}</button>;
+        }else if(live){
+          action=<button className={`wc-team-ko-res live${canDetail?" wc-team-ko-link":""}`} onClick={canDetail?()=>onOpenDetail(f.id):undefined} disabled={!canDetail}>LIVE {isHome?live.homeGoals:live.awayGoals}–{isHome?live.awayGoals:live.homeGoals}</button>;
+        }else if(opp){
+          action=<button className="wc-team-ko-preview" onClick={()=>onPreviewKo(code,opp.code,f)}>Preview ›</button>;
+        }else{
+          action=<span className="wc-team-ko-when">{formatKickoff(f.kickoff).date}</span>;
+        }
+        return (
+          <div className="wc-team-ko-step" key={f.id}>
+            <span className="wc-team-ko-round">{KO_ROUND_LABEL[f.round]}</span>
+            <span className="wc-team-ko-opp">
+              {opp
+                ? <button className="wc-linklike" onClick={()=>onSelectTeam(opp.code)}><Flag code={opp.code} className="wc-flag-sm"/> {opp.name}</button>
+                : <span className="wc-team-ko-tbd">{oppLabel}</span>}
+            </span>
+            {action}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confirmed,ko,koResults,liveByFixture,onPreviewKo,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onOpenVisibility}:{
   team:Team;focusKey:number|null;
   groupResults:Record<string,ScoreResult>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   confirmed?:ConfirmedXI;
+  ko:ResolvedKo[];koResults:Record<string,KoResult>;liveByFixture:Record<string,LiveGame>;
+  onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
   onOpenVisibility:(v:OpenTeamVisibility|null)=>void;
 }) {
@@ -1246,6 +1310,9 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
 
           <GroupMiniTable team={team} standings={groupStandings} qualifiers={qualifiers}
             onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
+
+          <TeamKnockoutPath code={team.code} ko={ko} koResults={koResults} liveByFixture={liveByFixture}
+            detailIds={detailIds} onOpenDetail={onOpenDetail} onPreviewKo={onPreviewKo} onSelectTeam={onSelectTeam}/>
 
           <div className="wc-team-body-grid">
             <div className="wc-team-body-text">
@@ -2072,14 +2139,16 @@ function FocusPickBridge({focusTeam,onPick}:{focusTeam:{code:string;k:number}|nu
 }
 
 
-function TeamsView({groupResults,liveGoals,qualifiers,confirmedLineups,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onTheme,focusTeam}:{
-  groupResults:Record<string,ScoreResult>;liveGoals:GoalEvent[];
+function TeamsView({groupResults,koResults,liveByFixture,liveGoals,qualifiers,confirmedLineups,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onPreviewKo,onTheme,focusTeam}:{
+  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;liveByFixture:Record<string,LiveGame>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   confirmedLineups:Record<string,ConfirmedXI>;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
+  onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
   onTheme:(code:string|null)=>void;
   focusTeam:{code:string;k:number}|null;
 }) {
+  const ko=useMemo(()=>resolveKnockout(groupResults,koResults),[groupResults,koResults]);
   const [search,setSearch]=useState("");
   const [confed,setConfed]=useState("all");
   const [group,setGroup]=useState("all");
@@ -2145,6 +2214,7 @@ function TeamsView({groupResults,liveGoals,qualifiers,confirmedLineups,detailIds
             focusKey={focusTeam?.code===team.code?focusTeam.k:null}
             groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
             confirmed={confirmedLineups[team.code]}
+            ko={ko} koResults={koResults} liveByFixture={liveByFixture} onPreviewKo={onPreviewKo}
             detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}
             onOpenVisibility={(v)=>updateOpenVisibility(team.code,v)}/>
         ))}
@@ -3289,9 +3359,10 @@ export default function App() {
           <StatsView goals={liveGoals} cards={liveCards} matchesPlayed={liveMatchesPlayed} onSelectTeam={goToTeam}/>
         )}
         {stage==="teams"&&(
-          <TeamsView groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
-            confirmedLineups={confirmedLineups}
+          <TeamsView groupResults={groupResults} koResults={koResults} liveByFixture={liveByFixture}
+            liveGoals={liveGoals} qualifiers={qualifiers} confirmedLineups={confirmedLineups}
             detailIds={detailIds} onOpenDetail={setDetailId} onSelectTeam={goToTeam} onSelectGroup={goToGroup}
+            onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})}
             onTheme={setThemeCode} focusTeam={focusTeam}/>
         )}
         {stage==="knockout"&&(
@@ -3468,6 +3539,27 @@ const CSS = `
 .wc-team-group-title{font-size:.74rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--chalk-dim);}
 .wc-team-group-link{background:none;border:none;padding:0;font:inherit;font-size:.76rem;font-weight:700;color:var(--gold);cursor:pointer;}
 .wc-team-group-link:hover{text-decoration:underline;}
+/* Knockout run inside a team card */
+.wc-team-ko{margin:.7rem 0 .2rem;background:var(--pitch-deep);border:1px solid var(--pitch-line);border-radius:12px;padding:.6rem .7rem;}
+.wc-team-ko-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;font-size:.74rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--chalk-dim);margin-bottom:.5rem;}
+.wc-team-ko-tag{font-size:.66rem;font-weight:800;letter-spacing:.02em;text-transform:none;border-radius:999px;padding:.12rem .5rem;}
+.wc-team-ko-tag-in{background:rgba(46,160,67,.16);color:#3fbf63;}
+.wc-team-ko-tag-out{background:rgba(220,53,69,.14);color:#f3a3aa;}
+.wc-team-ko-step{display:grid;grid-template-columns:5.5rem 1fr auto;align-items:center;gap:.5rem;padding:.28rem 0;border-top:1px solid var(--pitch-line);}
+.wc-team-ko-step:first-of-type{border-top:none;}
+.wc-team-ko-round{font-size:.64rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--gold);}
+.wc-team-ko-opp{min-width:0;font-size:.86rem;}
+.wc-team-ko-opp .wc-linklike{display:inline-flex;align-items:center;gap:.35rem;}
+.wc-team-ko-tbd{color:var(--chalk-dim);font-style:italic;font-size:.8rem;}
+.wc-team-ko-res{font-family:'JetBrains Mono',monospace;font-size:.74rem;font-weight:700;background:none;border:1px solid var(--pitch-line);border-radius:7px;padding:.18rem .45rem;color:var(--chalk);white-space:nowrap;}
+.wc-team-ko-res.win{color:#3fbf63;border-color:rgba(46,160,67,.4);}
+.wc-team-ko-res.loss{color:#f3a3aa;border-color:rgba(220,53,69,.35);}
+.wc-team-ko-res.live{color:#ff8a8a;border-color:rgba(255,77,77,.45);}
+.wc-team-ko-link{cursor:pointer;}
+.wc-team-ko-link:hover{background:var(--gold-soft);}
+.wc-team-ko-preview{background:none;border:1px solid var(--pitch-line);border-radius:7px;color:var(--gold);font:inherit;font-size:.72rem;font-weight:700;padding:.18rem .5rem;cursor:pointer;white-space:nowrap;}
+.wc-team-ko-preview:hover{border-color:var(--gold);}
+.wc-team-ko-when{font-size:.72rem;color:var(--chalk-dim);white-space:nowrap;}
 
 /* team chip */
 /* circular SVG flags (flag-icons squared variant, clipped to a circle) */
