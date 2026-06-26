@@ -2524,9 +2524,10 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
   // Regenerate on goals / full-time / new kickoffs, not on every clock tick.
   const sig=useMemo(()=>digestSignature(groupResults,liveGames),[groupResults,liveGames]);
   const pendingRef=useRef(false); // guard against overlapping requests
+  const [gen,setGen]=useState(0); // bumps on every fresh server response → replays the typewriter
 
   const showDigest=(t:string)=>{
-    setText(t); setStatus("idle");
+    setText(t); setStatus("idle"); setGen(g=>g+1);
     try{ localStorage.setItem("wc-digest-last",t); }catch{ /* ignore */ } // last-good fallback
   };
   const lastGood=()=>{ try{ return localStorage.getItem("wc-digest-last")||""; }catch{ return ""; } };
@@ -2586,7 +2587,7 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
       </div>
       <p className="wc-digest-body">
         {text
-          ? <Typewriter text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
+          ? <Typewriter key={gen} text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
           : status==="error"
             ? <span className="wc-digest-err">Couldn’t generate the digest — {err}. <button className="wc-digest-retry" onClick={()=>generate(true)}>Retry</button></span>
             : <span className="wc-digest-loading">Generating today’s briefing…</span>}
