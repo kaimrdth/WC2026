@@ -2548,10 +2548,12 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
     setStatus("loading"); setErr("");
     try{
       const r=await fetch(DIGEST_ENDPOINT,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({facts,force})});
+      let detail=""; if(!r.ok){ try{ const j=await r.clone().json(); detail=[j.error,j.detail].filter(Boolean).join(" · "); }catch{ /* ignore */ } }
       if(!r.ok){
         // Any backend failure (rate limit, missing key, outage) → show the best text we
         // have (cached last-good, else the local templated summary). Never go blank.
         const fb=bestEffort();
+        if(force) setNote(`couldn't generate (HTTP ${r.status}${detail?` — ${detail}`:""}) — showing last available`);
         if(fb){ setText(fb); setStatus("idle"); }
         else { setErr(`digest unavailable (HTTP ${r.status})`); setStatus("error"); }
         return;
@@ -2560,12 +2562,13 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
       const t=(d.text||"").trim();
       if(!t) throw new Error("empty response from model");
       showDigest(t);
-      // On a manual refresh, explain why the text may be unchanged.
-      setNote(force?(d.cached?"served from cache — redeploy the function to force fresh":d.stale?"rate-limited — showing the latest available":""):"");
+      // On a manual refresh, always report what came back so it's never a silent no-op.
+      if(force) setNote(d.cached?"served from cache — redeploy the function to force fresh":d.stale?"rate-limited — showing the latest available":"fresh ✓");
       if(!d.stale){ try{ localStorage.setItem(key,JSON.stringify({text:t})); }catch{ /* ignore */ } } // don't cache stale under this state's key
-    }catch{
+    }catch(e){
       // Network/parse failure → same best-effort fallback.
       const fb=bestEffort();
+      if(force) setNote(`couldn't reach the digest service${e instanceof Error?` — ${e.message}`:""}`);
       if(fb){ setText(fb); setStatus("idle"); }
       else { setErr("digest unavailable"); setStatus("error"); }
     }finally{ pendingRef.current=false; }
