@@ -1203,13 +1203,42 @@ function TeamKnockoutPath({code,ko,koResults,liveByFixture,detailIds,onOpenDetai
   );
 }
 
-function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confirmed,ko,koResults,liveByFixture,onPreviewKo,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onOpenVisibility}:{
+function TeamNextGroupMatch({team,groupResults,liveByFixture,detailIds,onOpenDetail,onPreviewGroup,onSelectTeam}:{
+  team:Team;groupResults:Record<string,ScoreResult>;liveByFixture:Record<string,LiveGame>;detailIds:Set<string>;
+  onOpenDetail:(id:string)=>void;onPreviewGroup:(id:string)=>void;onSelectTeam:(code:string)=>void;
+}){
+  const next=fixturesForGroup(team.group)
+    .filter(f=>(f.homeCode===team.code||f.awayCode===team.code)&&!groupResults[f.id])
+    .sort((a,b)=>a.kickoff.localeCompare(b.kickoff))[0];
+  if(!next) return null;
+  const isHome=next.homeCode===team.code;
+  const opp=TEAM_BY_CODE[isHome?next.awayCode:next.homeCode];
+  const live=liveByFixture[next.id];
+  const k=formatKickoff(next.kickoff);
+  return (
+    <div className="wc-team-ko wc-team-next">
+      <div className="wc-team-ko-head"><span>Next group match</span><span className="wc-team-ko-tag wc-team-ko-tag-pend">MD{next.matchday}</span></div>
+      <div className="wc-team-ko-step">
+        <span className="wc-team-ko-round">Group {team.group}</span>
+        <span className="wc-team-ko-opp">
+          <button className="wc-linklike" onClick={()=>onSelectTeam(opp.code)}><Flag code={opp.code} className="wc-flag-sm"/> {opp.name}</button>
+        </span>
+        {live
+          ? <button className="wc-team-ko-res live wc-team-ko-link" onClick={()=>onOpenDetail(next.id)}>LIVE {isHome?live.homeGoals:live.awayGoals}–{isHome?live.awayGoals:live.homeGoals}</button>
+          : <button className="wc-team-ko-preview" onClick={()=>detailIds.has(next.id)?onOpenDetail(next.id):onPreviewGroup(next.id)}>{detailIds.has(next.id)?"Details":"Preview"} ›</button>}
+      </div>
+      <div className="wc-team-next-sub">{k.date} · {k.time} · {next.venue}</div>
+    </div>
+  );
+}
+
+function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confirmed,ko,koResults,liveByFixture,onPreviewKo,onPreviewGroup,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onOpenVisibility}:{
   team:Team;focusKey:number|null;
   groupResults:Record<string,ScoreResult>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   confirmed?:ConfirmedXI;
   ko:ResolvedKo[];koResults:Record<string,KoResult>;liveByFixture:Record<string,LiveGame>;
-  onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
+  onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;onPreviewGroup:(id:string)=>void;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
   onOpenVisibility:(v:OpenTeamVisibility|null)=>void;
 }) {
@@ -1256,6 +1285,7 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
   const microFacts=useMemo(()=>buildTeamMicroFacts(team,groupResults,liveGoals,qualifiers,ko,koResults,liveByFixture,confirmed),[team,groupResults,liveGoals,qualifiers,ko,koResults,liveByFixture,confirmed]);
   const microFallback=useMemo(()=>fallbackTeamMicro(team,groupResults,qualifiers),[team,groupResults,qualifiers]);
   const microKey=useMemo(()=>`team:${team.code}:${digestCacheKey(microFacts)}`,[team.code,microFacts]);
+  const groupComplete=groupIsComplete(team.group,groupResults);
   return (
     <div className="wc-team-card" ref={ref}>
       <button className="wc-team-card-head" onClick={toggle}>
@@ -1285,8 +1315,11 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
           <GroupMiniTable team={team} standings={groupStandings} qualifiers={qualifiers}
             onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
 
-          <TeamKnockoutPath code={team.code} ko={ko} koResults={koResults} liveByFixture={liveByFixture}
-            detailIds={detailIds} onOpenDetail={onOpenDetail} onPreviewKo={onPreviewKo} onSelectTeam={onSelectTeam}/>
+          {groupComplete
+            ? <TeamKnockoutPath code={team.code} ko={ko} koResults={koResults} liveByFixture={liveByFixture}
+                detailIds={detailIds} onOpenDetail={onOpenDetail} onPreviewKo={onPreviewKo} onSelectTeam={onSelectTeam}/>
+            : <TeamNextGroupMatch team={team} groupResults={groupResults} liveByFixture={liveByFixture}
+                detailIds={detailIds} onOpenDetail={onOpenDetail} onPreviewGroup={onPreviewGroup} onSelectTeam={onSelectTeam}/>}
 
           <div className="wc-team-body-grid">
             <div className="wc-team-body-text">
@@ -1951,12 +1984,12 @@ function KnockoutView({groupResults,koResults,goalsByFixture,liveByFixture,detai
 
 
 
-function TeamsView({groupResults,koResults,liveByFixture,liveGoals,qualifiers,confirmedLineups,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onPreviewKo,onTheme,focusTeam}:{
+function TeamsView({groupResults,koResults,liveByFixture,liveGoals,qualifiers,confirmedLineups,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onPreviewKo,onPreviewGroup,onTheme,focusTeam}:{
   groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;liveByFixture:Record<string,LiveGame>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   confirmedLineups:Record<string,ConfirmedXI>;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
-  onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
+  onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;onPreviewGroup:(id:string)=>void;
   onTheme:(code:string|null)=>void;
   focusTeam:{code:string;k:number}|null;
 }) {
@@ -2027,6 +2060,7 @@ function TeamsView({groupResults,koResults,liveByFixture,liveGoals,qualifiers,co
             groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
             confirmed={confirmedLineups[team.code]}
             ko={ko} koResults={koResults} liveByFixture={liveByFixture} onPreviewKo={onPreviewKo}
+            onPreviewGroup={onPreviewGroup}
             detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}
             onOpenVisibility={(v)=>updateOpenVisibility(team.code,v)}/>
         ))}
@@ -3437,6 +3471,7 @@ export default function App() {
             liveGoals={liveGoals} qualifiers={qualifiers} confirmedLineups={confirmedLineups}
             detailIds={detailIds} onOpenDetail={setDetailId} onSelectTeam={goToTeam} onSelectGroup={goToGroup}
             onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})}
+            onPreviewGroup={setPreviewId}
             onTheme={setThemeCode} focusTeam={focusTeam}/>
         )}
         {stage==="knockout"&&(
@@ -3617,6 +3652,7 @@ const CSS = `
 .wc-team-ko-tag{font-size:.66rem;font-weight:800;letter-spacing:.02em;text-transform:none;border-radius:999px;padding:.12rem .5rem;}
 .wc-team-ko-tag-in{background:rgba(46,160,67,.16);color:#3fbf63;}
 .wc-team-ko-tag-out{background:rgba(220,53,69,.14);color:#f3a3aa;}
+.wc-team-ko-tag-pend{background:rgba(215,163,61,.14);color:var(--gold);}
 .wc-team-ko-step{display:grid;grid-template-columns:5.5rem 1fr auto;align-items:center;gap:.5rem;padding:.28rem 0;border-top:1px solid var(--pitch-line);}
 .wc-team-ko-step:first-of-type{border-top:none;}
 .wc-team-ko-round{font-size:.64rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--gold);}
@@ -3632,6 +3668,7 @@ const CSS = `
 .wc-team-ko-preview{background:none;border:1px solid var(--pitch-line);border-radius:7px;color:var(--gold);font:inherit;font-size:.72rem;font-weight:700;padding:.18rem .5rem;cursor:pointer;white-space:nowrap;}
 .wc-team-ko-preview:hover{border-color:var(--gold);}
 .wc-team-ko-when{font-size:.72rem;color:var(--chalk-dim);white-space:nowrap;}
+.wc-team-next-sub{border-top:1px solid var(--pitch-line);padding-top:.4rem;margin-top:.25rem;font-size:.68rem;color:var(--chalk-dim);}
 
 /* team chip */
 /* circular SVG flags (flag-icons squared variant, clipped to a circle) */
