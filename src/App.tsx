@@ -45,6 +45,18 @@ function CardIcon({red=false}:{red?:boolean}) {
   return <span className={`wc-cardicon${red?" wc-cardicon-r":""}`} role="img" aria-label={red?"red card":"yellow card"}/>;
 }
 
+function SoccerBallIcon({size=44,className=""}:{size?:number;className?:string}) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
+      <circle cx="32" cy="32" r="29" fill="#f7f4eb"/>
+      <path d="M32 14 43 22 39 35H25L21 22Z" fill="#151515"/>
+      <path d="M32 14 26 5a28.5 28.5 0 0 1 12 0ZM43 22l12-3a28.5 28.5 0 0 1 6 11l-9 8ZM39 35l7 11a28.5 28.5 0 0 1-10 8l-8-8ZM25 35l-7 11a28.5 28.5 0 0 1-10-8l9-8ZM21 22 9 19a28.5 28.5 0 0 1 6-11l17 6Z" fill="#151515"/>
+      <path d="M32 14 43 22M43 22 39 35M39 35H25M25 35 21 22M21 22 32 14M32 14l-6-9M43 22l12-3M39 35l7 11M25 35l-7 11M21 22 9 19" fill="none" stroke="#67645c" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+      <circle cx="32" cy="32" r="29" fill="none" stroke="#d8d3c6" strokeWidth="3"/>
+    </svg>
+  );
+}
+
 // Circular flag: a centered SVG background clipped to a circle (assets in /flags).
 function Flag({code,className=""}:{code:string;className?:string}) {
   const iso=FLAG_ISO[code];
@@ -3002,7 +3014,7 @@ function LooseBall({seed,onClose}:{seed:number;onClose:()=>void}) {
 
   return (
     <button ref={ballRef} className="wc-loose-ball" onPointerDown={kick} onDoubleClick={onClose} title="Kick" aria-label="Loose ball">
-      <BallIcon size={34}/>
+      <SoccerBallIcon/>
     </button>
   );
 }
