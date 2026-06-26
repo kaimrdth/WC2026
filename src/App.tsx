@@ -179,6 +179,12 @@ function teamTheme(code:string|null):CSSProperties{
     ["--chalk-dim" as string]:"#AFC0B9",
   } as CSSProperties;
 }
+// Scope a pitch (lineup) to one team's kit accent, so a two-team modal shows each side in
+// its own colours instead of the ambient app theme's accent.
+function pitchAccentStyle(code:string):CSSProperties{
+  const a=TEAM_COLORS[code]?.accent;
+  return a?({["--gold" as string]:brighten(a)} as CSSProperties):{};
+}
 const groupTeams = (letter: string) => TEAMS.filter(t => t.group === letter);
 
 interface Player { pos: string; name?: string; club?: string; }
@@ -999,7 +1005,7 @@ function TeamHub({team,groupResults,liveGoals,qualifiers,detailIds,onOpenDetail,
           if(!res) return (
             <div className="wc-hub-result wc-hub-result-upcoming" key={f.id}>
               <span className="wc-hub-md">MD{f.matchday}</span>
-              <span className="wc-hub-opp"><Flag code={opp.code} className="wc-flag-sm"/> {opp.name}</span>
+              <button className="wc-hub-opp wc-hub-link" onClick={()=>onSelectTeam(oppCode)}><Flag code={opp.code} className="wc-flag-sm"/> {opp.name}</button>
               <span className="wc-hub-outcome wc-hub-pending">—</span>
             </div>
           );
@@ -1008,12 +1014,13 @@ function TeamHub({team,groupResults,liveGoals,qualifiers,detailIds,onOpenDetail,
           const oc=tg>og?"W":tg<og?"L":"D";
           const clickable=detailIds.has(f.id);
           return (
-            <button className={`wc-hub-result wc-hub-result-${oc}${clickable?" wc-hub-result-link":""}`} key={f.id}
-              onClick={clickable?()=>onOpenDetail(f.id):undefined} disabled={!clickable}>
+            <div className={`wc-hub-result wc-hub-result-${oc}`} key={f.id}>
               <span className="wc-hub-md">MD{f.matchday}</span>
-              <span className="wc-hub-opp" onClick={clickable?(e)=>{e.stopPropagation();onSelectTeam(oppCode);}:undefined}><Flag code={opp.code} className="wc-flag-sm"/> {opp.name}</span>
-              <span className="wc-hub-outcome">{oc} {tg}–{og}</span>
-            </button>
+              <button className="wc-hub-opp wc-hub-link" onClick={()=>onSelectTeam(oppCode)}><Flag code={opp.code} className="wc-flag-sm"/> {opp.name}</button>
+              {clickable
+                ? <button className="wc-hub-outcome wc-hub-outcome-link" onClick={()=>onOpenDetail(f.id)} title="Match details">{oc} {tg}–{og} <span className="wc-hub-det">›</span></button>
+                : <span className="wc-hub-outcome">{oc} {tg}–{og}</span>}
+            </div>
           );
         })}
       </div>
@@ -1172,7 +1179,7 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
   const formation=confirmed?.formation || profile.formation;
   const xi=confirmed?.xi ?? profile.xi;
   const confirmedFx=confirmed?FIXTURE_BY_ID[confirmed.fixtureId]:undefined;
-  const confirmedLabel=confirmedFx?`Confirmed XI · MD${confirmedFx.matchday} v ${confirmedFx.homeCode===team.code?confirmedFx.awayCode:confirmedFx.homeCode}`:"Confirmed XI";
+  const confirmedLabel=confirmedFx?`Possible XI · last out MD${confirmedFx.matchday} v ${confirmedFx.homeCode===team.code?confirmedFx.awayCode:confirmedFx.homeCode}`:"Possible XI";
   const groupStandings=open?computeStandings(team.group,groupResults):[]; // only when expanded
   return (
     <div className="wc-team-card" ref={ref}>
@@ -1212,7 +1219,7 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
                 </span>
               </div>
             </div>
-            <div className="wc-team-pitch-wrap">
+            <div className="wc-team-pitch-wrap" style={pitchAccentStyle(team.code)}>
               <PitchDiagram formation={formation} xi={xi}/>
             </div>
           </div>
@@ -1933,7 +1940,7 @@ function DetailPitch({team,stats}:{team:DetailTeam;stats:Record<string,PlayerSta
   const numRows=rows.length;
   const benchOn=team.bench.filter(b=>b.on);
   return (
-    <div className="wc-detail-pitch-card">
+    <div className="wc-detail-pitch-card" style={pitchAccentStyle(team.code)}>
       <div className="wc-detail-pitch-head">
         <span className="wc-detail-pitch-team"><Flag code={team.code} className="wc-flag-sm"/> {team.name}</span>
         <span className="wc-detail-pitch-form">{team.formation||"XI"}</span>
@@ -2069,14 +2076,14 @@ function PreviewPitch({team,profile,confirmed}:{team:Team;profile:TeamProfile;co
   const formation=confirmed?.formation || profile.formation;
   const xi=confirmed?.xi ?? profile.xi;
   return (
-    <div className="wc-detail-pitch-card">
+    <div className="wc-detail-pitch-card" style={pitchAccentStyle(team.code)}>
       <div className="wc-detail-pitch-head">
         <span className="wc-detail-pitch-team"><Flag code={team.code} className="wc-flag-sm"/> {team.name}</span>
         <span className="wc-detail-pitch-form">{formation}</span>
       </div>
       <div className="wc-preview-meta">
         {COACHES[team.code]&&<span className="wc-preview-coach"><span className="wc-team-chip-k">Coach</span> {COACHES[team.code]}</span>}
-        <span className={`wc-lineup-badge${confirmed?" wc-lineup-confirmed":""}`}>{confirmed?"Confirmed XI":"Predicted XI"}</span>
+        <span className={`wc-lineup-badge${confirmed?" wc-lineup-confirmed":""}`}>{confirmed?"Possible XI":"Predicted XI"}</span>
       </div>
       <PitchDiagram formation={formation} xi={xi}/>
     </div>
@@ -3464,12 +3471,14 @@ const CSS = `
 .wc-hub-status-pend{color:var(--chalk-dim);border:1px solid var(--pitch-line);}
 .wc-hub-results{display:flex;flex-direction:column;gap:.35rem;}
 .wc-hub-result{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:8px;padding:.35rem .55rem;color:var(--chalk);font:inherit;}
-.wc-hub-result-link{cursor:pointer;}
-.wc-hub-result-link:hover{border-color:rgba(215,163,61,.5);}
-.wc-hub-md{font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;color:var(--chalk-dim);}
-.wc-hub-opp{flex:1;font-size:.78rem;font-weight:600;}
-.wc-hub-result-link .wc-hub-opp:hover{color:var(--gold);text-decoration:underline;}
-.wc-hub-outcome{font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:700;}
+.wc-hub-md{font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;color:var(--chalk-dim);flex-shrink:0;}
+.wc-hub-opp{flex:1;min-width:0;display:inline-flex;align-items:center;gap:.35rem;font-size:.78rem;font-weight:600;}
+.wc-hub-link{background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;}
+.wc-hub-link:hover{color:var(--gold);text-decoration:underline;}
+.wc-hub-outcome{font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:700;flex-shrink:0;}
+.wc-hub-outcome-link{display:inline-flex;align-items:center;gap:.3rem;background:none;border:1px solid var(--pitch-line);border-radius:6px;padding:.12rem .4rem;cursor:pointer;}
+.wc-hub-outcome-link:hover{border-color:var(--gold);background:var(--gold-soft);}
+.wc-hub-det{color:var(--gold);font-weight:800;}
 .wc-hub-result-W .wc-hub-outcome{color:#5fcf8e;}
 .wc-hub-result-L .wc-hub-outcome{color:#f3b0a6;}
 .wc-hub-result-D .wc-hub-outcome{color:var(--chalk-dim);}
