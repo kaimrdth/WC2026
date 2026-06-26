@@ -968,12 +968,44 @@ function TeamHub({team,groupResults,liveGoals,qualifiers,detailIds,onOpenDetail,
   );
 }
 
-function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confirmed,detailIds,onOpenDetail,onSelectTeam}:{
+// The team's full group table, with their row highlighted and a jump-to-group link.
+function GroupMiniTable({team,standings,qualifiers,onSelectTeam,onSelectGroup}:{
+  team:Team;standings:StandingRow[];qualifiers:ReturnType<typeof computeQualifiers>|null;
+  onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
+}){
+  const bestThirdCodes=qualifiers?new Set(qualifiers.bestThirds.map(t=>t.code)):null;
+  return (
+    <div className="wc-team-group">
+      <div className="wc-team-group-head">
+        <span className="wc-team-group-title">Group {team.group} table</span>
+        <button className="wc-team-group-link" onClick={()=>onSelectGroup(team.group)}>View group →</button>
+      </div>
+      <table className="wc-standings">
+        <thead><tr><th></th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead>
+        <tbody>
+          {standings.map((t,i)=>{
+            const adv=i<2||(i===2&&bestThirdCodes&&bestThirdCodes.has(t.code));
+            return (
+              <tr key={t.code} className={`${adv?"wc-row-through":""}${t.code===team.code?" wc-row-me":""}`}>
+                <td className="wc-pos">{i+1}</td>
+                <td><TeamChip team={t} onSelect={onSelectTeam}/></td>
+                <td>{t.played}</td><td>{t.win}</td><td>{t.draw}</td><td>{t.loss}</td>
+                <td>{fmtGD(t.gd)}</td><td className="wc-pts">{t.pts}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confirmed,detailIds,onOpenDetail,onSelectTeam,onSelectGroup}:{
   team:Team;focusKey:number|null;
   groupResults:Record<string,ScoreResult>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   confirmed?:ConfirmedXI;
-  detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;
+  detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
 }) {
   const profile=TEAM_PROFILES[team.code];
   const tier=tierForRank(team.fifaRank);
@@ -991,6 +1023,7 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
   const xi=confirmed?.xi ?? profile.xi;
   const confirmedFx=confirmed?FIXTURE_BY_ID[confirmed.fixtureId]:undefined;
   const confirmedLabel=confirmedFx?`Confirmed XI · MD${confirmedFx.matchday} v ${confirmedFx.homeCode===team.code?confirmedFx.awayCode:confirmedFx.homeCode}`:"Confirmed XI";
+  const groupStandings=open?computeStandings(team.group,groupResults):[]; // only when expanded
   return (
     <div className="wc-team-card" ref={ref}>
       <button className="wc-team-card-head" onClick={()=>setOpen(o=>!o)}>
@@ -1013,6 +1046,9 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
 
           <TeamHub team={team} groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
             detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam}/>
+
+          <GroupMiniTable team={team} standings={groupStandings} qualifiers={qualifiers}
+            onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
 
           <div className="wc-team-body-grid">
             <div className="wc-team-body-text">
@@ -1148,8 +1184,8 @@ function MatchCard({match, result, isKnockout=false, teamA, teamB, goals, onSele
   );
 }
 
-function GroupCard({letter,groupResults,qualifiers,goalsByFixture,onSelectTeam,detailIds,onOpenDetail,onOpenPreview,liveByFixture,showFixtures,onToggleFixtures,flash}:{
-  letter:string;groupResults:Record<string,ScoreResult>;
+function GroupCard({letter,standings,groupResults,qualifiers,goalsByFixture,onSelectTeam,detailIds,onOpenDetail,onOpenPreview,liveByFixture,showFixtures,onToggleFixtures,flash}:{
+  letter:string;standings:StandingRow[];groupResults:Record<string,ScoreResult>;
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   goalsByFixture:Record<string,GoalEvent[]>;
   onSelectTeam:(code:string)=>void;
@@ -1161,7 +1197,6 @@ function GroupCard({letter,groupResults,qualifiers,goalsByFixture,onSelectTeam,d
   onToggleFixtures:()=>void;
   flash?:boolean;
 }) {
-  const standings=computeStandings(letter,groupResults);
   const complete=groupIsComplete(letter,groupResults);
   const played=fixturesForGroup(letter).filter(m=>groupResults[m.id]).length;
   const bestThirdCodes=qualifiers?new Set(qualifiers.bestThirds.map(t=>t.code)):null;
@@ -1320,6 +1355,11 @@ function GroupsView({groupResults,qualifiers,goalsByFixture,onSelectTeam,detailI
   focusGroup:{letter:string;k:number}|null;
 }) {
   const [view,setView]=useState<"tables"|"schedule">("tables");
+  // Standings are computed once per results change and shared with every card, instead of
+  // each of the 12 GroupCards recomputing on every render (toggles, polls, etc.).
+  const standingsByGroup=useMemo(()=>Object.fromEntries(
+    GROUP_LETTERS.map(l=>[l,computeStandings(l,groupResults)])
+  ) as Record<string,StandingRow[]>,[groupResults]);
   // matches collapsed by default — a clean grid of 12 tables, far less dense
   const [expanded,setExpanded]=useState<Record<string,boolean>>({});
   const allShown=GROUP_LETTERS.every(l=>expanded[l]);
@@ -1355,7 +1395,7 @@ function GroupsView({groupResults,qualifiers,goalsByFixture,onSelectTeam,detailI
       {view==="tables"?(
         <div className="wc-groups-grid">
           {GROUP_LETTERS.map(letter=>(
-            <GroupCard key={letter} letter={letter} groupResults={groupResults}
+            <GroupCard key={letter} letter={letter} standings={standingsByGroup[letter]} groupResults={groupResults}
               qualifiers={qualifiers}
               goalsByFixture={goalsByFixture} onSelectTeam={onSelectTeam}
               detailIds={detailIds} onOpenDetail={onOpenDetail} onOpenPreview={onOpenPreview} liveByFixture={liveByFixture}
@@ -1738,11 +1778,11 @@ function FocusPickBridge({focusTeam,onPick}:{focusTeam:{code:string;k:number}|nu
 }
 
 
-function TeamsView({groupResults,liveGoals,qualifiers,confirmedLineups,detailIds,onOpenDetail,onSelectTeam,focusTeam}:{
+function TeamsView({groupResults,liveGoals,qualifiers,confirmedLineups,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,focusTeam}:{
   groupResults:Record<string,ScoreResult>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   confirmedLineups:Record<string,ConfirmedXI>;
-  detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;
+  detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
   focusTeam:{code:string;k:number}|null;
 }) {
   const [search,setSearch]=useState("");
@@ -1797,7 +1837,7 @@ function TeamsView({groupResults,liveGoals,qualifiers,confirmedLineups,detailIds
             focusKey={focusTeam?.code===team.code?focusTeam.k:null}
             groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
             confirmed={confirmedLineups[team.code]}
-            detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam}/>
+            detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
         ))}
     </div>
   );
@@ -2538,31 +2578,37 @@ export default function App() {
   },[liveEventIds,liveGames]);
 
   // Pull published XIs for those events once each, keeping each team's most-recent lineup.
+  // Fetched in small parallel batches so a cold load with many completed matches warms up
+  // quickly instead of fetching one event at a time.
   useEffect(()=>{
     let alive=true;
     (async()=>{
-      for(const [fid,{eventId,kickoffMs}] of Object.entries(lineupEvents)){
+      const todo=Object.entries(lineupEvents).filter(([,{eventId}])=>!fetchedEventsRef.current.has(eventId));
+      const CONCURRENCY=5;
+      for(let i=0;i<todo.length&&alive;i+=CONCURRENCY){
+        const batch=todo.slice(i,i+CONCURRENCY);
+        const results=await Promise.all(batch.map(async([fid,{eventId,kickoffMs}])=>{
+          try{ const rosters=await fetchEventLineups(eventId); return rosters.length?{fid,eventId,kickoffMs,rosters}:null; }
+          catch{ return null; /* no lineup yet — retry on a later poll */ }
+        }));
         if(!alive) break;
-        if(fetchedEventsRef.current.has(eventId)) continue;
-        try{
-          const rosters=await fetchEventLineups(eventId);
-          if(!alive) break;
-          if(rosters.length){
-            fetchedEventsRef.current.add(eventId);
-            try{ localStorage.setItem("wc26_lineup_events",JSON.stringify([...fetchedEventsRef.current])); }catch{/* quota */}
-            setConfirmedLineups(prev=>{
-              const next={...prev};
-              for(const r of rosters){
-                const existing=next[r.code];
-                if(!existing || kickoffMs>=existing.kickoffMs){
-                  next[r.code]={code:r.code,formation:r.formation||TEAM_PROFILES[r.code]?.formation||"",xi:detailTeamToXI(r),fixtureId:fid,kickoffMs};
-                }
+        const got=results.filter((r):r is NonNullable<typeof r>=>!!r);
+        if(!got.length) continue;
+        for(const g of got) fetchedEventsRef.current.add(g.eventId);
+        try{ localStorage.setItem("wc26_lineup_events",JSON.stringify([...fetchedEventsRef.current])); }catch{/* quota */}
+        setConfirmedLineups(prev=>{
+          const next={...prev};
+          for(const {fid,kickoffMs,rosters} of got){
+            for(const r of rosters){
+              const existing=next[r.code];
+              if(!existing || kickoffMs>=existing.kickoffMs){
+                next[r.code]={code:r.code,formation:r.formation||TEAM_PROFILES[r.code]?.formation||"",xi:detailTeamToXI(r),fixtureId:fid,kickoffMs};
               }
-              try{ localStorage.setItem("wc26_lineups",JSON.stringify(next)); }catch{/* quota */}
-              return next;
-            });
+            }
           }
-        }catch{/* no lineup yet — retry on a later poll */}
+          try{ localStorage.setItem("wc26_lineups",JSON.stringify(next)); }catch{/* quota */}
+          return next;
+        });
       }
     })();
     return ()=>{ alive=false; };
@@ -2657,7 +2703,7 @@ export default function App() {
         {stage==="teams"&&(
           <TeamsView groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
             confirmedLineups={confirmedLineups}
-            detailIds={detailIds} onOpenDetail={setDetailId} onSelectTeam={goToTeam} focusTeam={focusTeam}/>
+            detailIds={detailIds} onOpenDetail={setDetailId} onSelectTeam={goToTeam} onSelectGroup={goToGroup} focusTeam={focusTeam}/>
         )}
         {stage==="knockout"&&(
           <KnockoutView groupResults={groupResults} onSelectTeam={goToTeam}/>
@@ -2801,6 +2847,12 @@ const CSS = `
 .wc-pts{font-weight:700;color:var(--gold);}
 .wc-row-through{box-shadow:inset 3px 0 0 var(--gold);background:rgba(215,163,61,.1);}
 .wc-row-out{opacity:.7;}
+.wc-row-me{outline:1px solid rgba(244,241,232,.35);outline-offset:-1px;font-weight:700;}
+.wc-team-group{margin:.6rem 0 .2rem;}
+.wc-team-group-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem;}
+.wc-team-group-title{font-size:.74rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--chalk-dim);}
+.wc-team-group-link{background:none;border:none;padding:0;font:inherit;font-size:.76rem;font-weight:700;color:var(--gold);cursor:pointer;}
+.wc-team-group-link:hover{text-decoration:underline;}
 
 /* team chip */
 /* circular SVG flags (flag-icons squared variant, clipped to a circle) */
