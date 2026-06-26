@@ -2937,7 +2937,13 @@ function DigestHonorarium(){
 function LooseBall({seed,onClose}:{seed:number;onClose:()=>void}) {
   const ballRef=useRef<HTMLButtonElement|null>(null);
   const stateRef=useRef({x:0,y:0,vx:0,vy:0,rot:0,size:52,last:0});
+  const closeTimerRef=useRef<number|null>(null);
   const [reduced,setReduced]=useState(false);
+
+  const scheduleClose=()=>{
+    if(closeTimerRef.current!=null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current=window.setTimeout(onClose,45000);
+  };
 
   useEffect(()=>{
     const mq=window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -2979,16 +2985,21 @@ function LooseBall({seed,onClose}:{seed:number;onClose:()=>void}) {
       raf=requestAnimationFrame(step);
     };
 
-    const closeTimer=window.setTimeout(onClose,45000);
+    scheduleClose();
     const onKey=(e:KeyboardEvent)=>{ if(e.key==="Escape") onClose(); };
     window.addEventListener("keydown",onKey);
     raf=requestAnimationFrame(step);
-    return ()=>{ cancelAnimationFrame(raf); clearTimeout(closeTimer); window.removeEventListener("keydown",onKey); };
+    return ()=>{
+      cancelAnimationFrame(raf);
+      if(closeTimerRef.current!=null) window.clearTimeout(closeTimerRef.current);
+      window.removeEventListener("keydown",onKey);
+    };
   },[seed,reduced,onClose]);
 
   if(reduced) return null;
   const kick=(e:PointerEvent<HTMLButtonElement>)=>{
     e.preventDefault();
+    scheduleClose();
     const rect=e.currentTarget.getBoundingClientRect();
     const cx=rect.left+rect.width/2;
     const cy=rect.top+rect.height/2;
@@ -3002,7 +3013,7 @@ function LooseBall({seed,onClose}:{seed:number;onClose:()=>void}) {
 
   return (
     <button ref={ballRef} className="wc-loose-ball" onPointerDown={kick} onDoubleClick={onClose} title="Kick" aria-label="Loose ball">
-      <span aria-hidden="true">⚽</span>
+      <span aria-hidden="true" className="wc-loose-ball-emoji">⚽</span>
     </button>
   );
 }
@@ -3490,9 +3501,10 @@ const CSS = `
   display:flex;align-items:center;justify-content:center;padding:0;border:none;
   background:transparent;box-shadow:none;text-shadow:0 10px 22px rgba(0,0,0,.38);
   font-size:42px;line-height:1;
-  cursor:grab;touch-action:none;will-change:transform;
+  cursor:grab;touch-action:none;will-change:transform;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
 }
 .wc-loose-ball:active{cursor:grabbing;}
+.wc-loose-ball-emoji{display:block;pointer-events:none;user-select:none;-webkit-user-select:none;}
 @media(max-width:520px){.wc-loose-ball{width:42px;height:42px;font-size:34px;}}
 @media(prefers-reduced-motion:reduce){.wc-loose-ball{display:none;}}
 .wc-goal-shout{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;font-family:'Anton',sans-serif;font-size:clamp(2.2rem,9vw,5rem);color:var(--gold);text-shadow:0 3px 24px rgba(0,0,0,.55);letter-spacing:.04em;white-space:nowrap;pointer-events:none;animation:wc-goal-shout 2.5s ease-out forwards;}
