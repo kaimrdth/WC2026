@@ -115,18 +115,18 @@ const TEAM_BY_CODE: Record<string, Team> = Object.fromEntries(TEAMS.map(t => [t.
 // base with dark text for sides like Japan. Colours are auto-adjusted for legibility.
 interface TeamTheme { a:string; b:string; accent:string; mode?:"light"|"vivid"; }
 const TEAM_COLORS: Record<string,TeamTheme> = {
-  MEX:{a:"#006847",b:"#9D2235",accent:"#E63946"}, KOR:{a:"#003478",b:"#C5172A",accent:"#5A9BE0"}, RSA:{a:"#007749",b:"#001489",accent:"#FFB81C"}, CZE:{a:"#11457E",b:"#D7141A",accent:"#5A9BE0"},
+  MEX:{a:"#006847",b:"#9D2235",accent:"#E63946"}, KOR:{a:"#CD2E3A",b:"#003478",accent:"#5A9BE0"}, RSA:{a:"#007749",b:"#001489",accent:"#FFB81C"}, CZE:{a:"#D7141A",b:"#11457E",accent:"#5A9BE0"},
   CAN:{a:"#C8102E",b:"#7A0C1C",accent:"#FF5C5C"}, SUI:{a:"#D52B1E",b:"#7A0C12",accent:"#FF6B6B"}, QAT:{a:"#8A1538",b:"#5A0E25",accent:"#E0A9B8"}, BIH:{a:"#002395",b:"#FFD100",accent:"#FFD100"},
-  BRA:{a:"#009C3B",b:"#00318B",accent:"#FFDF00"}, MAR:{a:"#C1272D",b:"#006233",accent:"#2E9E5B"}, SCO:{a:"#0065BF",b:"#003E73",accent:"#5AA0E0"}, HAI:{a:"#00209F",b:"#D21034",accent:"#FF5C6E"},
-  USA:{a:"#0A3161",b:"#B31942",accent:"#7BA4D9"}, PAR:{a:"#0038A8",b:"#D52B1E",accent:"#FF5C5C"}, AUS:{a:"#00843D",b:"#001489",accent:"#FFCD00"}, TUR:{a:"#E30A17",b:"#8A0610",accent:"#FF6B6B"},
-  GER:{a:"#1A1A1A",b:"#BB0A1E",accent:"#FFCC00"}, ECU:{a:"#0072CE",b:"#D21034",accent:"#FFD100"}, CIV:{a:"#FF8200",b:"#009A44",accent:"#FF9E33"}, CUW:{a:"#002B7F",b:"#0A1E4D",accent:"#F9E814"},
-  NED:{a:"#FF6A00",b:"#1B458F",accent:"#1B458F",mode:"vivid"}, JPN:{a:"#FFFFFF",b:"#BC002D",accent:"#BC002D",mode:"light"}, TUN:{a:"#E70013",b:"#8A000B",accent:"#FF5A5A"}, SWE:{a:"#006AA7",b:"#003E63",accent:"#FECC00"},
-  BEL:{a:"#1A1A1A",b:"#C8102E",accent:"#FDDA24"}, IRN:{a:"#239F40",b:"#DA0000",accent:"#3FBF63"}, EGY:{a:"#CE1126",b:"#1A1A1A",accent:"#C8A02E"}, NZL:{a:"#00247D",b:"#13183A",accent:"#CC142B"},
-  ESP:{a:"#AA151B",b:"#5C0A0E",accent:"#F1BF00"}, URU:{a:"#5AAAEA",b:"#2E6BA8",accent:"#FCD116"}, KSA:{a:"#006C35",b:"#00451F",accent:"#2E9E5B"}, CPV:{a:"#003893",b:"#CF2027",accent:"#5A9BE0"},
+  BRA:{a:"#009C3B",b:"#F7D000",accent:"#F7D000"}, MAR:{a:"#C1272D",b:"#006233",accent:"#2E9E5B"}, SCO:{a:"#0065BF",b:"#003E73",accent:"#5AA0E0"}, HAI:{a:"#00209F",b:"#D21034",accent:"#FF5C6E"},
+  USA:{a:"#0A3161",b:"#B31942",accent:"#7BA4D9"}, PAR:{a:"#0038A8",b:"#D52B1E",accent:"#FF5C5C"}, AUS:{a:"#FFCD00",b:"#00843D",accent:"#00843D",mode:"vivid"}, TUR:{a:"#E30A17",b:"#8A0610",accent:"#FF6B6B"},
+  GER:{a:"#1A1A1A",b:"#BB0A1E",accent:"#FFCC00"}, ECU:{a:"#FFD400",b:"#0072CE",accent:"#0072CE",mode:"vivid"}, CIV:{a:"#FF8200",b:"#009A44",accent:"#009A44",mode:"vivid"}, CUW:{a:"#002B7F",b:"#0A1E4D",accent:"#F9E814"},
+  NED:{a:"#FF6A00",b:"#1B458F",accent:"#1B458F",mode:"vivid"}, JPN:{a:"#FFFFFF",b:"#BC002D",accent:"#BC002D",mode:"light"}, TUN:{a:"#E70013",b:"#8A000B",accent:"#FF5A5A"}, SWE:{a:"#006AA7",b:"#FFCC00",accent:"#FFCC00"},
+  BEL:{a:"#C8102E",b:"#1A1A1A",accent:"#FDDA24"}, IRN:{a:"#239F40",b:"#DA0000",accent:"#3FBF63"}, EGY:{a:"#CE1126",b:"#1A1A1A",accent:"#C8A02E"}, NZL:{a:"#00247D",b:"#FFFFFF",accent:"#CC142B"},
+  ESP:{a:"#AA151B",b:"#5C0A0E",accent:"#F1BF00"}, URU:{a:"#6CB7EA",b:"#123A6B",accent:"#123A6B",mode:"vivid"}, KSA:{a:"#006C35",b:"#00451F",accent:"#2E9E5B"}, CPV:{a:"#003893",b:"#CF2027",accent:"#5A9BE0"},
   FRA:{a:"#0055A4",b:"#C8102E",accent:"#EF6B5E"}, SEN:{a:"#00853F",b:"#E31B23",accent:"#FDEF42"}, NOR:{a:"#BA0C2F",b:"#00205B",accent:"#7BA4D9"}, IRQ:{a:"#007A3D",b:"#CE1126",accent:"#3FBF63"},
-  ARG:{a:"#6CACE4",b:"#3A7BBF",accent:"#FCBF49"}, AUT:{a:"#ED2939",b:"#8A1019",accent:"#FF6B6B"}, ALG:{a:"#006233",b:"#D21034",accent:"#3FBF63"}, JOR:{a:"#1A1A1A",b:"#007A3D",accent:"#CE1126"},
-  POR:{a:"#C8102E",b:"#006600",accent:"#FFD700"}, COL:{a:"#003893",b:"#CE1126",accent:"#FCD116"}, UZB:{a:"#0099B5",b:"#1EB53A",accent:"#33C7E0"}, COD:{a:"#007FFF",b:"#CE1021",accent:"#F7D518"},
-  ENG:{a:"#CE1124",b:"#0A2472",accent:"#FF5C6E"}, CRO:{a:"#C8102E",b:"#171796",accent:"#FF5C6E"}, PAN:{a:"#005293",b:"#D21034",accent:"#5A9BE0"}, GHA:{a:"#006B3F",b:"#CE1126",accent:"#FCD116"},
+  ARG:{a:"#74ACDF",b:"#FFFFFF",accent:"#2F6BB3",mode:"light"}, AUT:{a:"#ED2939",b:"#8A1019",accent:"#FF6B6B"}, ALG:{a:"#006233",b:"#D21034",accent:"#3FBF63"}, JOR:{a:"#1A1A1A",b:"#007A3D",accent:"#CE1126"},
+  POR:{a:"#C8102E",b:"#006600",accent:"#FFD700"}, COL:{a:"#FCD116",b:"#003893",accent:"#C81E3A",mode:"vivid"}, UZB:{a:"#0099B5",b:"#1EB53A",accent:"#33C7E0"}, COD:{a:"#007FFF",b:"#CE1021",accent:"#F7D518"},
+  ENG:{a:"#FFFFFF",b:"#0A2472",accent:"#CE1124",mode:"light"}, CRO:{a:"#171796",b:"#C8102E",accent:"#FF5C6E"}, PAN:{a:"#005293",b:"#D21034",accent:"#5A9BE0"}, GHA:{a:"#006B3F",b:"#CE1126",accent:"#FCD116"},
 };
 const hexToRgb=(h:string)=>{const n=h.replace("#","");const v=n.length===3?n.split("").map(c=>c+c).join(""):n;const i=parseInt(v,16);return {r:(i>>16)&255,g:(i>>8)&255,b:i&255};};
 const rgbToHex=({r,g,b}:{r:number;g:number;b:number})=>{const c=(x:number)=>Math.round(Math.max(0,Math.min(255,x))).toString(16).padStart(2,"0");return `#${c(r)}${c(g)}${c(b)}`;};
