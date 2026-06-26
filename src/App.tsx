@@ -1155,9 +1155,9 @@ function GroupMiniTable({team,standings,qualifiers,onSelectTeam,onSelectGroup}:{
         <thead><tr><th></th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead>
         <tbody>
           {standings.map((t,i)=>{
-            const adv=i<2||(i===2&&bestThirdCodes&&bestThirdCodes.has(t.code));
+            const cls=i<2?"wc-row-q":(i===2&&bestThirdCodes?.has(t.code))?"wc-row-third":"";
             return (
-              <tr key={t.code} className={`${adv?"wc-row-through":""}${t.code===team.code?" wc-row-me":""}`}>
+              <tr key={t.code} className={`${cls}${t.code===team.code?" wc-row-me":""}`}>
                 <td className="wc-pos">{i+1}</td>
                 <td><TeamChip team={t} onSelect={onSelectTeam}/></td>
                 <td>{t.played}</td><td>{t.win}</td><td>{t.draw}</td><td>{t.loss}</td>
@@ -1417,9 +1417,9 @@ function GroupCard({letter,standings,groupResults,qualifiers,goalsByFixture,onSe
         <thead><tr><th></th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead>
         <tbody>
           {standings.map((t,i)=>{
-            const adv=i<2||(i===2&&bestThirdCodes&&bestThirdCodes.has(t.code));
+            const cls=i<2?"wc-row-q":(i===2&&bestThirdCodes?.has(t.code))?"wc-row-third":"";
             return (
-              <tr key={t.code} className={adv?"wc-row-through":""}>
+              <tr key={t.code} className={cls}>
                 <td className="wc-pos">{i+1}</td>
                 <td><TeamChip team={t} onSelect={onSelectTeam}/></td>
                 <td>{t.played}</td><td>{t.win}</td><td>{t.draw}</td><td>{t.loss}</td>
@@ -3447,7 +3447,7 @@ const CSS = `
 .wc-group-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:.65rem;}
 .wc-group-letter{font-family:'Anton',sans-serif;font-size:1.5rem;color:var(--gold);}
 .wc-group-pill{display:inline-flex;align-items:center;gap:.25rem;background:var(--pitch-deep);border:1px solid var(--pitch-line);border-radius:999px;padding:.2rem .65rem;font-size:.65rem;font-weight:700;color:var(--chalk-dim);}
-.wc-group-pill-done{background:var(--gold-soft);border-color:rgba(215,163,61,.4);color:var(--gold);}
+.wc-group-pill-done{background:rgba(46,160,67,.16);border-color:rgba(46,160,67,.45);color:#3fbf63;}
 
 .wc-standings{width:100%;border-collapse:collapse;font-size:.74rem;}
 .wc-standings .wc-chip,.wc-standings .wc-chip-name,.wc-standings .wc-chip-name-link{white-space:normal;text-align:left;}
@@ -3458,6 +3458,9 @@ const CSS = `
 .wc-pos{color:var(--chalk-dim);width:1.1rem;}
 .wc-pts{font-weight:700;color:var(--gold);}
 .wc-row-through{box-shadow:inset 3px 0 0 var(--gold);background:rgba(215,163,61,.1);}
+/* Qualification indicators — fixed colours so they stay meaningful under team theming. */
+.wc-row-q{box-shadow:inset 3px 0 0 #2ea043;background:rgba(46,160,67,.12);}
+.wc-row-third{box-shadow:inset 3px 0 0 #e0a52e;background:rgba(224,165,46,.12);}
 .wc-row-out{opacity:.7;}
 .wc-row-me{outline:1px solid rgba(244,241,232,.35);outline-offset:-1px;font-weight:700;}
 .wc-team-group{margin:.6rem 0 .2rem;}
