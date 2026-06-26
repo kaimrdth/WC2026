@@ -1614,9 +1614,10 @@ function KnockoutView({groupResults,onSelectTeam}:{groupResults:Record<string,Sc
 
 
 const ROUND_ICON:Record<string,ReactNode>={F:<Trophy size={13}/>,"3P":<Medal size={13}/>};
-function PathStepRow({step,picked,last,forced,onSelectTeam,onPickOpponent}:{
+function PathStepRow({step,picked,last,forced,onSelectTeam,onPickOpponent,onPreview}:{
   step:PathStep;picked:Team;last:boolean;forced:boolean;
   onSelectTeam:(c:string)=>void;onPickOpponent:(slot:string,code:string)=>void;
+  onPreview:(a:string,b:string,fixture:KoFixture)=>void;
 }){
   const f=step.fixture;
   const k=formatKickoff(f.kickoff);
@@ -1655,15 +1656,19 @@ function PathStepRow({step,picked,last,forced,onSelectTeam,onPickOpponent}:{
             </select>
           </label>
         )}
-        <div className="wc-path-meta">{k.date} · {k.time} · {f.venue}, {f.city}</div>
+        <div className="wc-path-foot">
+          <span className="wc-path-meta">{k.date} · {k.time} · {f.venue}, {f.city}</span>
+          {opp&&<button className="wc-path-preview" onClick={()=>onPreview(picked.code,opp.code,f)}><Users size={12}/> Match preview</button>}
+        </div>
       </div>
     </div>
   );
 }
 
-function PathView({groupResults,liveByFixture,onSelectTeam,focusTeam}:{
+function PathView({groupResults,liveByFixture,onSelectTeam,onPreviewKo,focusTeam}:{
   groupResults:Record<string,ScoreResult>;liveByFixture:Record<string,LiveGame>;
-  onSelectTeam:(code:string)=>void;focusTeam:{code:string;k:number}|null;
+  onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
+  focusTeam:{code:string;k:number}|null;
 }){
   const [picked,setPicked]=useState<string|null>(null);
   const [scenario,setScenario]=useState<"W"|"R">("W");
@@ -1680,6 +1685,7 @@ function PathView({groupResults,liveByFixture,onSelectTeam,focusTeam}:{
     for(const L of GROUP_LETTERS) s[L]=computeStandings(L,effectiveResults);
     return s;
   },[effectiveResults]);
+  const qualifiers=useMemo(()=>computeQualifiers(effectiveResults),[effectiveResults]);
 
   const team=picked?TEAM_BY_CODE[picked]:null;
   const table=team?standings[team.group]:null;
@@ -1694,14 +1700,26 @@ function PathView({groupResults,liveByFixture,onSelectTeam,focusTeam}:{
   const pickRef=useRef<HTMLDivElement|null>(null);
   useEffect(()=>{ if(picked) boardRef.current?.scrollIntoView({behavior:"smooth",block:"start"}); },[picked]);
 
-  const path=useMemo(()=>team?buildTeamPath(team.code,scenario,standings,picks):[],[team,scenario,standings,picks]);
+  const myRow=team&&table?table[idx]:null;
+  const teamFixtures=team?fixturesForGroup(team.group).filter(f=>f.homeCode===team.code||f.awayCode===team.code):[];
+  const gamesLeft=teamFixtures.filter(f=>!groupResults[f.id]).length;
+
+  // State-aware: once the group is decided, the finish is fixed — the W/2nd toggle becomes
+  // the actual outcome (no longer a hypothetical), and 3rd/4th is advanced-as-best-third or out.
+  const pos=idx+1;
+  const groupDone=!!team&&gamesLeft===0;
+  const bestThird=!!qualifiers?.bestThirds.some(t=>t.code===team?.code);
+  const eliminated=groupDone&&(pos===4||(pos===3&&!bestThird));
+  const advancedThird=groupDone&&pos===3&&bestThird;
+  const locked=groupDone&&pos<=2;                          // finish is settled at 1st/2nd
+  const activeScenario:"W"|"R"=locked?(pos===1?"W":"R"):scenario;
+  const showPath=!groupDone||pos<=2;                       // 3rd/4th have no mapped bracket slot
+
+  const path=useMemo(()=>team?buildTeamPath(team.code,activeScenario,standings,picks):[],[team,activeScenario,standings,picks]);
   const pickOpponent=(slot:string,code:string)=>{
     setPicks(prev=>{ const next={...prev}; forceWinnerInto(slot,code,standings,next); return next; });
   };
   const hasPicks=Object.keys(picks).length>0;
-  const myRow=team&&table?table[idx]:null;
-  const teamFixtures=team?fixturesForGroup(team.group).filter(f=>f.homeCode===team.code||f.awayCode===team.code):[];
-  const gamesLeft=teamFixtures.filter(f=>!groupResults[f.id]).length;
 
   return (
     <div className="wc-path">
@@ -1743,32 +1761,49 @@ function PathView({groupResults,liveByFixture,onSelectTeam,focusTeam}:{
                 </div>
               </div>
             </div>
-            <div className="wc-view-switch wc-path-switch">
-              <button className={`wc-view-btn${scenario==="W"?" wc-view-active":""}`} onClick={()=>setScenario("W")}>Win Group {team.group}</button>
-              <button className={`wc-view-btn${scenario==="R"?" wc-view-active":""}`} onClick={()=>setScenario("R")}>Finish 2nd</button>
-            </div>
+            {/* Group decided → show the settled finish; still in progress → hypothetical toggle. */}
+            {groupDone
+              ? <span className="wc-path-locked">{pos===1?`Won Group ${team.group}`:pos===2?`Runner-up · Group ${team.group}`:advancedThird?"Through · best 3rd":"Eliminated"}</span>
+              : <div className="wc-view-switch wc-path-switch">
+                  <button className={`wc-view-btn${activeScenario==="W"?" wc-view-active":""}`} onClick={()=>setScenario("W")}>Win Group {team.group}</button>
+                  <button className={`wc-view-btn${activeScenario==="R"?" wc-view-active":""}`} onClick={()=>setScenario("R")}>Finish 2nd</button>
+                </div>}
           </div>
 
-          {idx>=2&&(
+          {!groupDone&&pos>=3&&(
             <div className="wc-path-warn">
-              <Info size={14}/> {team.name} would first need to climb into the top two of Group {team.group} (or grab one of the eight best-third spots) to qualify. The route below is the hypothetical if they finish {scenario==="W"?"1st":"2nd"}.
+              <Info size={14}/> {team.name} would first need to climb into the top two of Group {team.group} (or grab one of the eight best-third spots) to qualify. The route below is the hypothetical if they finish {activeScenario==="W"?"1st":"2nd"}.
+            </div>
+          )}
+          {eliminated&&(
+            <div className="wc-path-warn">
+              <Info size={14}/> {team.name} finished {pos===3?"3rd":"bottom"} of Group {team.group} and are out — no knockout route.
+            </div>
+          )}
+          {advancedThird&&(
+            <div className="wc-path-warn">
+              <Info size={14}/> {team.name} advanced as one of the eight best third-placed teams. Their Round-of-32 opponent depends on the final third-place allocation, so the route isn't mapped yet.
             </div>
           )}
 
-          <div className="wc-path-scenario">
-            <span>If <strong>{team.name}</strong> {scenario==="W"?<>win <strong>Group {team.group}</strong></>:<>finish <strong>runner-up in Group {team.group}</strong></>}, their road to the {KO_ROUND_LABEL.F} runs:</span>
-            {hasPicks&&<button className="wc-path-reset" onClick={()=>setPicks({})}><RotateCcw size={12}/> Reset what-ifs</button>}
-          </div>
+          {showPath&&<>
+            <div className="wc-path-scenario">
+              <span>{groupDone
+                ? <><strong>{team.name}</strong> {pos===1?<>won <strong>Group {team.group}</strong></>:<>finished <strong>runner-up in Group {team.group}</strong></>} — their road to the {KO_ROUND_LABEL.F}:</>
+                : <>If <strong>{team.name}</strong> {activeScenario==="W"?<>win <strong>Group {team.group}</strong></>:<>finish <strong>runner-up in Group {team.group}</strong></>}, their road to the {KO_ROUND_LABEL.F} runs:</>}</span>
+              {hasPicks&&<button className="wc-path-reset" onClick={()=>setPicks({})}><RotateCcw size={12}/> Reset what-ifs</button>}
+            </div>
 
-          <div className="wc-path-steps">
-            {path.length===0
-              ? <div className="wc-path-empty">No bracket route mapped for this slot.</div>
-              : path.map((s,i)=>(
-                  <PathStepRow key={s.fixture.id} step={s} picked={team} last={i===path.length-1}
-                    forced={!!picks[feederFixture(s.oppSlot)?.id ?? ""]}
-                    onSelectTeam={onSelectTeam} onPickOpponent={pickOpponent}/>
-                ))}
-          </div>
+            <div className="wc-path-steps">
+              {path.length===0
+                ? <div className="wc-path-empty">No bracket route mapped for this slot.</div>
+                : path.map((s,i)=>(
+                    <PathStepRow key={s.fixture.id} step={s} picked={team} last={i===path.length-1}
+                      forced={!!picks[feederFixture(s.oppSlot)?.id ?? ""]}
+                      onSelectTeam={onSelectTeam} onPickOpponent={pickOpponent} onPreview={onPreviewKo}/>
+                  ))}
+            </div>
+          </>}
 
           <button className="wc-path-up" onClick={()=>pickRef.current?.scrollIntoView({behavior:"smooth",block:"start"})}>
             <ArrowUp size={14}/> Pick another team
@@ -2080,6 +2115,47 @@ function MatchPreviewModal({fixture,groupResults,confirmedLineups,onClose,onSele
           <div className="wc-detail-pitches">
             {hp&&<PreviewPitch team={home} profile={hp} confirmed={confirmedLineups[home.code]}/>}
             {ap&&<PreviewPitch team={away} profile={ap} confirmed={confirmedLineups[away.code]}/>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Preview for a projected knockout matchup (e.g. a team's Round-of-32 game on its path).
+function KoPreviewModal({matchup,confirmedLineups,onClose,onSelectTeam}:{
+  matchup:{a:string;b:string;fixture:KoFixture};confirmedLineups:Record<string,ConfirmedXI>;onClose:()=>void;onSelectTeam:(c:string)=>void;
+}){
+  useEffect(()=>{
+    const h=(e:KeyboardEvent)=>{ if(e.key==="Escape") onClose(); };
+    window.addEventListener("keydown",h); return ()=>window.removeEventListener("keydown",h);
+  },[onClose]);
+  const a=TEAM_BY_CODE[matchup.a], b=TEAM_BY_CODE[matchup.b];
+  const f=matchup.fixture;
+  const kickoff=formatKickoff(f.kickoff);
+  const ap=TEAM_PROFILES[a.code], bp=TEAM_PROFILES[b.code];
+  return (
+    <div className="wc-modal-overlay" onClick={onClose}>
+      <div className="wc-modal" onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true">
+        <button className="wc-modal-close" onClick={onClose} title="Close"><X size={18}/></button>
+        <div className="wc-detail-score">
+          <button className="wc-detail-team-btn" onClick={()=>onSelectTeam(a.code)}>
+            <Flag code={a.code} className="wc-detail-flag"/>{a.name}
+          </button>
+          <div className="wc-detail-score-mid">
+            <span className="wc-preview-kick">{KO_ROUND_LABEL[f.round]}</span>
+            <span className="wc-detail-when">{kickoff.date} · {kickoff.time}</span>
+            <span className="wc-detail-when">{f.venue}, {f.city}</span>
+          </div>
+          <button className="wc-detail-team-btn wc-detail-team-right" onClick={()=>onSelectTeam(b.code)}>
+            {b.name}<Flag code={b.code} className="wc-detail-flag"/>
+          </button>
+        </div>
+        <div className="wc-preview-section">
+          <div className="wc-preview-h">Projected line-ups</div>
+          <div className="wc-detail-pitches">
+            {ap&&<PreviewPitch team={a} profile={ap} confirmed={confirmedLineups[a.code]}/>}
+            {bp&&<PreviewPitch team={b} profile={bp} confirmed={confirmedLineups[b.code]}/>}
           </div>
         </div>
       </div>
@@ -2544,6 +2620,7 @@ export default function App() {
   // detailed match view + pre-match preview (modals)
   const [detailId,setDetailId]=useState<string|null>(null);
   const [previewId,setPreviewId]=useState<string|null>(null);
+  const [koPreview,setKoPreview]=useState<{a:string;b:string;fixture:KoFixture}|null>(null);
   const detailIds=useMemo(()=>new Set(Object.keys(liveEventIds)),[liveEventIds]);
 
   // Live tracker: load real data on mount, then keep polling while a match window
@@ -2717,7 +2794,8 @@ export default function App() {
           <KnockoutView groupResults={groupResults} onSelectTeam={goToTeam}/>
         )}
         {stage==="path"&&(
-          <PathView groupResults={groupResults} liveByFixture={liveByFixture} onSelectTeam={goToTeam} focusTeam={focusTeam}/>
+          <PathView groupResults={groupResults} liveByFixture={liveByFixture} onSelectTeam={goToTeam}
+            onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})} focusTeam={focusTeam}/>
         )}
       </main>
 
@@ -2732,6 +2810,12 @@ export default function App() {
         <MatchPreviewModal fixture={FIXTURE_BY_ID[previewId]} groupResults={groupResults} confirmedLineups={confirmedLineups}
           onClose={()=>setPreviewId(null)}
           onSelectTeam={(c)=>{ setPreviewId(null); goToTeam(c); }}/>
+      )}
+
+      {koPreview&&(
+        <KoPreviewModal matchup={koPreview} confirmedLineups={confirmedLineups}
+          onClose={()=>setKoPreview(null)}
+          onSelectTeam={(c)=>{ setKoPreview(null); goToTeam(c); }}/>
       )}
 
       <footer className="wc-footer">
@@ -3301,6 +3385,10 @@ const CSS = `
 .wc-path-reset:hover{color:var(--gold);border-color:var(--gold);}
 .wc-path-up{display:flex;width:fit-content;align-items:center;gap:.4rem;margin:.4rem auto 0;background:transparent;color:var(--chalk-dim);border:1px solid var(--pitch-line);border-radius:999px;padding:.4rem .9rem;font:inherit;font-size:.78rem;font-weight:600;cursor:pointer;}
 .wc-path-up:hover{color:var(--gold);border-color:var(--gold);}
+.wc-path-locked{display:inline-flex;align-items:center;font-size:.74rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--gold);background:rgba(215,163,61,.12);border:1px solid rgba(215,163,61,.4);border-radius:999px;padding:.3rem .7rem;flex-shrink:0;}
+.wc-path-foot{display:flex;align-items:center;justify-content:space-between;gap:.6rem;flex-wrap:wrap;margin-top:.5rem;}
+.wc-path-preview{display:inline-flex;align-items:center;gap:.3rem;background:none;border:1px solid var(--pitch-line);border-radius:999px;color:var(--chalk-dim);font:inherit;font-size:.72rem;font-weight:600;padding:.2rem .55rem;cursor:pointer;flex-shrink:0;}
+.wc-path-preview:hover{color:var(--gold);border-color:var(--gold);}
 .wc-path-whatif{color:var(--pitch-deep);background:var(--gold);border-color:var(--gold);}
 .wc-path-pick{display:flex;align-items:center;gap:.45rem;margin-top:.5rem;flex-wrap:wrap;}
 .wc-path-pick-k{font-size:.68rem;color:var(--chalk-dim);text-transform:uppercase;letter-spacing:.04em;font-weight:700;}
