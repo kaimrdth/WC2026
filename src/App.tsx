@@ -2295,12 +2295,18 @@ function buildDigestFacts(groupResults:Record<string,ScoreResult>, liveGames:Liv
   return lines.join("\n");
 }
 
-// Stable hash of the facts (minus the live clock, which ticks every poll) so a
-// repeat load with unchanged state reuses the cached digest, but a new result or
-// live-score change regenerates it.
-function digestCacheKey(facts:string):string{
-  const stable=facts.replace(/\((?:\d+'|\d+\+\d+'|HT|Halftime)[^)]*,/g,"(LIVE,");
-  let h=5381; for(let i=0;i<stable.length;i++) h=((h<<5)+h+stable.charCodeAt(i))|0;
+// Score-based signature of the tournament state. It changes when a goal is scored
+// (a live score moves), a match ends (live → final result), a new match kicks off, or
+// the day rolls over — and crucially NOT when only the match clock ticks. This drives
+// both the regeneration trigger and the cache key, so goals and full-time fire a fresh
+// digest while routine polls don't.
+function digestSignature(groupResults:Record<string,ScoreResult>, liveGames:LiveGame[]):string{
+  const live=liveGames.map(g=>`L:${g.fixtureId}:${g.homeGoals}-${g.awayGoals}`).sort();
+  const done=Object.keys(groupResults).sort().map(id=>`R:${id}:${groupResults[id].homeGoals}-${groupResults[id].awayGoals}`);
+  return [localDayKey(new Date()),...live,...done].join("|");
+}
+function digestCacheKey(sig:string):string{
+  let h=5381; for(let i=0;i<sig.length;i++) h=((h<<5)+h+sig.charCodeAt(i))|0;
   return `wc-digest:${h>>>0}`;
 }
 
@@ -2388,6 +2394,8 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
   const [err,setErr]=useState("");
   const facts=useMemo(()=>buildDigestFacts(groupResults,liveGames),[groupResults,liveGames]);
   const fallback=useMemo(()=>fallbackDigest(groupResults,liveGames),[groupResults,liveGames]);
+  // Regenerate on goals / full-time / new kickoffs, not on every clock tick.
+  const sig=useMemo(()=>digestSignature(groupResults,liveGames),[groupResults,liveGames]);
   const pendingRef=useRef(false); // guard against overlapping requests
 
   const showDigest=(t:string)=>{
@@ -2400,9 +2408,9 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
   const bestEffort=()=>lastGood()||fallback;
 
   const generate=async(force:boolean)=>{
-    const key=digestCacheKey(facts);
-    // Repeat load with unchanged state → serve cache (no API call). New result or
-    // live-score change → key differs → regenerate.
+    const key=digestCacheKey(sig);
+    // Repeat load with unchanged state → serve cache (no API call). A goal, full-time, or
+    // new kickoff changes the signature → key differs → regenerate.
     if(!force){
       try{ const c=localStorage.getItem(key); if(c){ setText(JSON.parse(c).text); setStatus("idle"); return; } }catch{ /* ignore */ }
     }
@@ -2435,7 +2443,7 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
   // Always show the digest — there's always something to say (today's games, or a
   // recap + what's next). Regenerate whenever the state (facts) changes.
   const hasData=matchesPlayed>0||liveGames.length>0||ALL_GROUP_MATCHES.some(f=>!groupResults[f.id]);
-  useEffect(()=>{ if(hasData) generate(false); },[facts,hasData]); // eslint-disable-line
+  useEffect(()=>{ if(hasData) generate(false); },[sig,hasData]); // eslint-disable-line
 
   if(!hasData) return null; // tournament over — nothing left to preview
   return (
