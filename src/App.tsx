@@ -2796,9 +2796,7 @@ function MicroDigest({facts,cacheKey,fallback,tone="team",onSelectTeam,onSelectG
   return (
     <div className={`wc-micro wc-micro-${tone}`}>
       <span className="wc-micro-tag"><Sparkles size={12}/> Context{status==="loading"&&<Loader2 className="wc-spin" size={12}/>}</span>
-      <p>{onSelectTeam||onSelectGroup
-        ? <MicroDigestLinks text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
-        : text}</p>
+      <p><MicroTypewriter text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/></p>
     </div>
   );
 }
@@ -2922,6 +2920,24 @@ function MicroDigestLinks({text,onSelectTeam,onSelectGroup}:{
     if(s.t==="group"&&onSelectGroup) return <button key={i} className="wc-digest-link" onClick={()=>onSelectGroup(s.code)}>{s.v}</button>;
     return <span key={i}>{s.v}</span>;
   })}</>;
+}
+
+function MicroTypewriter({text,onSelectTeam,onSelectGroup,speed=10}:{
+  text:string;onSelectTeam?:(c:string)=>void;onSelectGroup?:(l:string)=>void;speed?:number;
+}){
+  const [n,setN]=useState(0);
+  useEffect(()=>{
+    setN(0); if(!text) return;
+    let i=0;
+    const id=setInterval(()=>{
+      i+=3;
+      setN(Math.min(i,text.length));
+      if(i>=text.length) clearInterval(id);
+    },speed);
+    return ()=>clearInterval(id);
+  },[text,speed]);
+  if(n>=text.length) return <MicroDigestLinks text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>;
+  return <>{text.slice(0,n)}<span className="wc-caret"/></>;
 }
 
 // Types out the digest, then swaps to the linkified version once fully revealed.
