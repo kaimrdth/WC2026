@@ -107,6 +107,45 @@ const TEAM_DATA: Team[] = [
 const TEAMS: Team[] = TEAM_DATA;
 const GROUP_LETTERS = ["A","B","C","D","E","F","G","H","I","J","K","L"];
 const TEAM_BY_CODE: Record<string, Team> = Object.fromEntries(TEAMS.map(t => [t.code, t]));
+
+// ── Per-team theming ──────────────────────────────────────────────────────────
+// Each team has a primary (used to tint the dark background) and an accent (replaces
+// the gold). The app stays dark so light text never clashes; the accent is brightened
+// if needed so it reads both as text on the dark bg and as a fill behind dark text.
+const TEAM_COLORS: Record<string,{p:string;a:string}> = {
+  MEX:{p:"#006847",a:"#CE1126"}, KOR:{p:"#003478",a:"#CD2E3A"}, RSA:{p:"#007749",a:"#FFB81C"}, CZE:{p:"#11457E",a:"#D7141A"},
+  CAN:{p:"#C8102E",a:"#FF4C4C"}, SUI:{p:"#D52B1E",a:"#FF5C5C"}, QAT:{p:"#8A1538",a:"#E9C9D2"}, BIH:{p:"#002395",a:"#FFD100"},
+  BRA:{p:"#009C3B",a:"#FFDF00"}, MAR:{p:"#C1272D",a:"#2E9E5B"}, SCO:{p:"#0065BF",a:"#5AA0E0"}, HAI:{p:"#00209F",a:"#D21034"},
+  USA:{p:"#0A3161",a:"#B31942"}, PAR:{p:"#0038A8",a:"#D52B1E"}, AUS:{p:"#00843D",a:"#FFCD00"}, TUR:{p:"#E30A17",a:"#FF6B6B"},
+  GER:{p:"#BB0A1E",a:"#FFCC00"}, ECU:{p:"#0072CE",a:"#FFD100"}, CIV:{p:"#FF8200",a:"#009A44"}, CUW:{p:"#002B7F",a:"#F9E814"},
+  NED:{p:"#AE1C28",a:"#21468B"}, JPN:{p:"#BC002D",a:"#E84A5F"}, TUN:{p:"#E70013",a:"#FF5A5A"}, SWE:{p:"#006AA7",a:"#FECC00"},
+  BEL:{p:"#2B2B2B",a:"#FDDA24"}, IRN:{p:"#239F40",a:"#DA0000"}, EGY:{p:"#CE1126",a:"#C8A02E"}, NZL:{p:"#00247D",a:"#CC142B"},
+  ESP:{p:"#AA151B",a:"#F1BF00"}, URU:{p:"#5AAAEA",a:"#FCD116"}, KSA:{p:"#006C35",a:"#2E9E5B"}, CPV:{p:"#003893",a:"#CF2027"},
+  FRA:{p:"#0055A4",a:"#EF4135"}, SEN:{p:"#00853F",a:"#FDEF42"}, NOR:{p:"#BA0C2F",a:"#00205B"}, IRQ:{p:"#007A3D",a:"#CE1126"},
+  ARG:{p:"#6CACE4",a:"#FCBF49"}, AUT:{p:"#ED2939",a:"#FF6B6B"}, ALG:{p:"#006233",a:"#D21034"}, JOR:{p:"#007A3D",a:"#CE1126"},
+  POR:{p:"#006600",a:"#FF0000"}, COL:{p:"#003893",a:"#FCD116"}, UZB:{p:"#0099B5",a:"#1EB53A"}, COD:{p:"#007FFF",a:"#F7D518"},
+  ENG:{p:"#CE1124",a:"#FF5A5A"}, CRO:{p:"#FF0000",a:"#171796"}, PAN:{p:"#005293",a:"#D21034"}, GHA:{p:"#006B3F",a:"#FCD116"},
+};
+const hexToRgb=(h:string)=>{const n=h.replace("#","");const v=n.length===3?n.split("").map(c=>c+c).join(""):n;const i=parseInt(v,16);return {r:(i>>16)&255,g:(i>>8)&255,b:i&255};};
+const rgbToHex=({r,g,b}:{r:number;g:number;b:number})=>{const c=(x:number)=>Math.round(Math.max(0,Math.min(255,x))).toString(16).padStart(2,"0");return `#${c(r)}${c(g)}${c(b)}`;};
+const mixHex=(a:string,b:string,t:number)=>{const x=hexToRgb(a),y=hexToRgb(b);return rgbToHex({r:x.r+(y.r-x.r)*t,g:x.g+(y.g-x.g)*t,b:x.b+(y.b-x.b)*t});};
+const relLum=(h:string)=>{const {r,g,b}=hexToRgb(h);const f=(c:number)=>{c/=255;return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4);};return 0.2126*f(r)+0.7152*f(g)+0.0722*f(b);};
+const brighten=(h:string,target=0.45)=>{let c=h,g=0;while(relLum(c)<target&&g<8){c=mixHex(c,"#ffffff",0.16);g++;}return c;};
+const rgbaHex=(h:string,a:number)=>{const {r,g,b}=hexToRgb(h);return `rgba(${r},${g},${b},${a})`;};
+// Build the CSS-variable overrides for a team (or {} for the default green/gold theme).
+function teamTheme(code:string|null):CSSProperties{
+  if(!code||!TEAM_COLORS[code]) return {};
+  const {p,a}=TEAM_COLORS[code];
+  const accent=brighten(a);
+  return {
+    ["--pitch" as string]:mixHex("#0a130d",p,0.18),
+    ["--pitch-deep" as string]:mixHex("#070f0a",p,0.12),
+    ["--pitch-card" as string]:mixHex("#0e1812",p,0.24),
+    ["--pitch-line" as string]:rgbaHex(accent,0.22),
+    ["--gold" as string]:accent,
+    ["--gold-soft" as string]:rgbaHex(accent,0.15),
+  } as CSSProperties;
+}
 const groupTeams = (letter: string) => TEAMS.filter(t => t.group === letter);
 
 interface Player { pos: string; name?: string; club?: string; }
@@ -1007,12 +1046,13 @@ function GroupMiniTable({team,standings,qualifiers,onSelectTeam,onSelectGroup}:{
   );
 }
 
-function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confirmed,detailIds,onOpenDetail,onSelectTeam,onSelectGroup}:{
+function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confirmed,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onTheme}:{
   team:Team;focusKey:number|null;
   groupResults:Record<string,ScoreResult>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   confirmed?:ConfirmedXI;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
+  onTheme:(code:string|null)=>void;
 }) {
   const profile=TEAM_PROFILES[team.code];
   const tier=tierForRank(team.fifaRank);
@@ -1021,9 +1061,10 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
   const captain=captainOf(team.code);
   const [open,setOpen]=useState(false);
   const ref=useRef<HTMLDivElement|null>(null);
+  const toggle=()=>setOpen(o=>{ const next=!o; onTheme(next?team.code:null); return next; }); // theme the app to this team
   useEffect(()=>{
-    if(focusKey!=null){ setOpen(true); ref.current?.scrollIntoView({behavior:"smooth",block:"start"}); }
-  },[focusKey]);
+    if(focusKey!=null){ setOpen(true); onTheme(team.code); ref.current?.scrollIntoView({behavior:"smooth",block:"start"}); }
+  },[focusKey]); // eslint-disable-line
   if(!profile)return null;
   // Prefer ESPN's published XI when we have one; otherwise fall back to the predicted squad.
   const formation=confirmed?.formation || profile.formation;
@@ -1033,7 +1074,7 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
   const groupStandings=open?computeStandings(team.group,groupResults):[]; // only when expanded
   return (
     <div className="wc-team-card" ref={ref}>
-      <button className="wc-team-card-head" onClick={()=>setOpen(o=>!o)}>
+      <button className="wc-team-card-head" onClick={toggle}>
         <Flag code={team.code} className="wc-team-flag-lg"/>
         <span className="wc-team-card-title">
           <span className="wc-team-card-name">{team.name}</span>
@@ -1840,11 +1881,12 @@ function FocusPickBridge({focusTeam,onPick}:{focusTeam:{code:string;k:number}|nu
 }
 
 
-function TeamsView({groupResults,liveGoals,qualifiers,confirmedLineups,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,focusTeam}:{
+function TeamsView({groupResults,liveGoals,qualifiers,confirmedLineups,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onTheme,focusTeam}:{
   groupResults:Record<string,ScoreResult>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   confirmedLineups:Record<string,ConfirmedXI>;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
+  onTheme:(code:string|null)=>void;
   focusTeam:{code:string;k:number}|null;
 }) {
   const [search,setSearch]=useState("");
@@ -1899,7 +1941,7 @@ function TeamsView({groupResults,liveGoals,qualifiers,confirmedLineups,detailIds
             focusKey={focusTeam?.code===team.code?focusTeam.k:null}
             groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
             confirmed={confirmedLineups[team.code]}
-            detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
+            detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup} onTheme={onTheme}/>
         ))}
     </div>
   );
@@ -2723,9 +2765,14 @@ export default function App() {
     (()=>{ try{ return JSON.parse(localStorage.getItem("wc26_lineup_events") || "[]"); }catch{ return []; } })()
   ));
 
+  // The app's color scheme shifts to the active team's colours, reverting to the
+  // default green/gold when you leave the Teams view.
+  const [themeCode,setThemeCode]=useState<string|null>(null);
+  useEffect(()=>{ if(stage!=="teams") setThemeCode(null); },[stage]);
+
   // clicking a team in a match card jumps to its Teams page entry
   const [focusTeam,setFocusTeam]=useState<{code:string;k:number}|null>(null);
-  const goToTeam=(code:string)=>{ setStage("teams"); setFocusTeam({code,k:Date.now()}); };
+  const goToTeam=(code:string)=>{ setStage("teams"); setFocusTeam({code,k:Date.now()}); setThemeCode(code); };
   // clicking a group in the digest jumps to the Groups view and scrolls to that group
   const [focusGroup,setFocusGroup]=useState<{letter:string;k:number}|null>(null);
   const goToGroup=(letter:string)=>{ setStage("groups"); setFocusGroup({letter,k:Date.now()}); };
@@ -2834,7 +2881,7 @@ export default function App() {
   const groupsDone=GROUP_LETTERS.filter(l=>groupIsComplete(l,groupResults)).length;
 
   return (
-    <div className="wc-app">
+    <div className="wc-app" style={teamTheme(themeCode)}>
       <style>{CSS}</style>
       <header className="wc-hero">
         <div className="wc-hero-top">
@@ -2901,7 +2948,8 @@ export default function App() {
         {stage==="teams"&&(
           <TeamsView groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
             confirmedLineups={confirmedLineups}
-            detailIds={detailIds} onOpenDetail={setDetailId} onSelectTeam={goToTeam} onSelectGroup={goToGroup} focusTeam={focusTeam}/>
+            detailIds={detailIds} onOpenDetail={setDetailId} onSelectTeam={goToTeam} onSelectGroup={goToGroup}
+            onTheme={setThemeCode} focusTeam={focusTeam}/>
         )}
         {stage==="knockout"&&(
           <KnockoutView groupResults={groupResults} onSelectTeam={goToTeam} onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})}/>
@@ -2951,13 +2999,22 @@ export default function App() {
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Anton&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
 
+/* Register the themeable colors so they animate when a team theme is applied/removed. */
+@property --pitch{syntax:"<color>";inherits:true;initial-value:#0F3D2E;}
+@property --pitch-deep{syntax:"<color>";inherits:true;initial-value:#0A2B21;}
+@property --pitch-card{syntax:"<color>";inherits:true;initial-value:#0e3224;}
+@property --pitch-line{syntax:"<color>";inherits:true;initial-value:rgba(244,241,232,.10);}
+@property --gold{syntax:"<color>";inherits:true;initial-value:#D7A33D;}
+@property --gold-soft{syntax:"<color>";inherits:true;initial-value:rgba(215,163,61,.15);}
 .wc-app{
   --pitch:#0F3D2E;--pitch-deep:#0A2B21;--pitch-card:#0e3224;--pitch-line:rgba(244,241,232,.10);
   --chalk:#F4F1E8;--chalk-dim:#9AADA4;--gold:#D7A33D;--gold-soft:rgba(215,163,61,.15);
   --green-win:#22543D;--red-loss:rgba(220,53,69,.10);
   font-family:'Space Grotesk',sans-serif;background:var(--pitch);color:var(--chalk);
   min-height:100vh;padding:1.5rem 1rem 3rem;box-sizing:border-box;
+  transition:--pitch .7s ease,--pitch-deep .7s ease,--pitch-card .7s ease,--pitch-line .7s ease,--gold .7s ease,--gold-soft .7s ease;
 }
+@media(prefers-reduced-motion:reduce){.wc-app{transition:none;}}
 .wc-app *{box-sizing:border-box;}
 .wc-app button{font-family:inherit;cursor:pointer;}
 
