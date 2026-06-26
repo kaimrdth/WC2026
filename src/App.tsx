@@ -1855,13 +1855,19 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
       const wrap=wrapRef.current;
       const final=finalRef.current;
       if(!wrap||!final) return;
-      const target=final.offsetLeft+(final.offsetWidth/2)-(wrap.clientWidth/2);
-      wrap.scrollTo({left:Math.max(0,target),behavior:"auto"});
+      const wrapRect=wrap.getBoundingClientRect();
+      const finalRect=final.getBoundingClientRect();
+      const delta=(finalRect.left+finalRect.width/2)-(wrapRect.left+wrapRect.width/2);
+      const max=wrap.scrollWidth-wrap.clientWidth;
+      const target=Math.min(Math.max(wrap.scrollLeft+delta,0),Math.max(max,0));
+      wrap.scrollTo({left:target,behavior:"auto"});
     };
     const raf=requestAnimationFrame(centerFinal);
+    const settle=window.setTimeout(centerFinal,80);
     window.addEventListener("resize",centerFinal);
     return ()=>{
       cancelAnimationFrame(raf);
+      window.clearTimeout(settle);
       window.removeEventListener("resize",centerFinal);
     };
   },[ko.length]);
