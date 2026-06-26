@@ -45,18 +45,6 @@ function CardIcon({red=false}:{red?:boolean}) {
   return <span className={`wc-cardicon${red?" wc-cardicon-r":""}`} role="img" aria-label={red?"red card":"yellow card"}/>;
 }
 
-function SoccerBallIcon({size=44,className=""}:{size?:number;className?:string}) {
-  return (
-    <svg className={className} width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
-      <circle cx="32" cy="32" r="29" fill="#f7f4eb"/>
-      <path d="M32 14 43 22 39 35H25L21 22Z" fill="#151515"/>
-      <path d="M32 14 26 5a28.5 28.5 0 0 1 12 0ZM43 22l12-3a28.5 28.5 0 0 1 6 11l-9 8ZM39 35l7 11a28.5 28.5 0 0 1-10 8l-8-8ZM25 35l-7 11a28.5 28.5 0 0 1-10-8l9-8ZM21 22 9 19a28.5 28.5 0 0 1 6-11l17 6Z" fill="#151515"/>
-      <path d="M32 14 43 22M43 22 39 35M39 35H25M25 35 21 22M21 22 32 14M32 14l-6-9M43 22l12-3M39 35l7 11M25 35l-7 11M21 22 9 19" fill="none" stroke="#67645c" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-      <circle cx="32" cy="32" r="29" fill="none" stroke="#d8d3c6" strokeWidth="3"/>
-    </svg>
-  );
-}
-
 // Circular flag: a centered SVG background clipped to a circle (assets in /flags).
 function Flag({code,className=""}:{code:string;className?:string}) {
   const iso=FLAG_ISO[code];
@@ -3014,7 +3002,7 @@ function LooseBall({seed,onClose}:{seed:number;onClose:()=>void}) {
 
   return (
     <button ref={ballRef} className="wc-loose-ball" onPointerDown={kick} onDoubleClick={onClose} title="Kick" aria-label="Loose ball">
-      <SoccerBallIcon/>
+      <span aria-hidden="true">⚽</span>
     </button>
   );
 }
@@ -3499,13 +3487,13 @@ const CSS = `
 }
 .wc-loose-ball{
   position:fixed;left:0;top:0;z-index:70;width:52px;height:52px;border-radius:999px;
-  display:flex;align-items:center;justify-content:center;padding:0;border:2px solid rgba(20,22,26,.9);
-  color:#111;background:#f4f1e8;box-shadow:0 12px 30px rgba(0,0,0,.32),inset 0 0 0 3px rgba(255,255,255,.65);
+  display:flex;align-items:center;justify-content:center;padding:0;border:none;
+  background:transparent;box-shadow:none;text-shadow:0 10px 22px rgba(0,0,0,.38);
+  font-size:42px;line-height:1;
   cursor:grab;touch-action:none;will-change:transform;
 }
 .wc-loose-ball:active{cursor:grabbing;}
-.wc-loose-ball svg{width:34px;height:34px;display:block;}
-@media(max-width:520px){.wc-loose-ball{width:42px;height:42px;}.wc-loose-ball svg{width:28px;height:28px;}}
+@media(max-width:520px){.wc-loose-ball{width:42px;height:42px;font-size:34px;}}
 @media(prefers-reduced-motion:reduce){.wc-loose-ball{display:none;}}
 .wc-goal-shout{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;font-family:'Anton',sans-serif;font-size:clamp(2.2rem,9vw,5rem);color:var(--gold);text-shadow:0 3px 24px rgba(0,0,0,.55);letter-spacing:.04em;white-space:nowrap;pointer-events:none;animation:wc-goal-shout 2.5s ease-out forwards;}
 @keyframes wc-goal-shout{
