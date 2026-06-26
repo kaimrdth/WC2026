@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, CSSProperties } from "react";
 import { RotateCcw, ChevronDown, ChevronUp, Info, Star, Check, X, Loader2, AlertCircle, Users, BarChart3, Medal, Ticket, ArrowDown, ArrowUp, ArrowLeftRight, CalendarClock, Sparkles, Trophy, Route } from "lucide-react";
 
 const CONFED: Record<string, { label: string; color: string }> = {
@@ -2338,18 +2338,60 @@ function StatsView({goals,cards,matchesPlayed,onSelectTeam}:{
   );
 }
 
+// A screen-wide burst of soccer balls arcing up from the bottom — fires on a goal.
+function GoalBalls(){
+  const balls=useMemo(()=>Array.from({length:20},()=>({
+    left:Math.random()*100, x:(Math.random()*2-1)*45, h:55+Math.random()*42,
+    r:(Math.random()*2-1)*900, dur:1.7+Math.random()*1.2, delay:Math.random()*0.4,
+    size:16+Math.random()*24,
+  })),[]);
+  return (
+    <div className="wc-goal-balls" aria-hidden="true">
+      {balls.map((b,i)=>(
+        <span className="wc-goal-ball" key={i} style={{
+          left:`${b.left}vw`, fontSize:`${b.size}px`, animationDuration:`${b.dur}s`, animationDelay:`${b.delay}s`,
+          ["--x" as string]:`${b.x}vw`, ["--h" as string]:`${b.h}vh`, ["--r" as string]:`${b.r}deg`,
+        } as CSSProperties}>⚽</span>
+      ))}
+    </div>
+  );
+}
+
 function LiveBanner({games,onOpen}:{
   games:LiveGame[];onOpen:(fixtureId:string)=>void;
 }) {
+  // Detect a score change (goal) per live fixture and trigger the celebration.
+  const prevRef=useRef<Record<string,number>>({});
+  const [celebrate,setCelebrate]=useState<{fixtureId:string;key:number}|null>(null);
+  useEffect(()=>{
+    const prev=prevRef.current;
+    let scored:string|null=null;
+    for(const g of games){
+      const total=g.homeGoals+g.awayGoals;
+      if(prev[g.fixtureId]!=null && total>prev[g.fixtureId]) scored=g.fixtureId; // a goal since last poll
+      prev[g.fixtureId]=total;
+    }
+    for(const k of Object.keys(prev)) if(!games.some(g=>g.fixtureId===k)) delete prev[k]; // forget ended games
+    if(scored) setCelebrate({fixtureId:scored,key:Date.now()});
+  },[games]);
+  useEffect(()=>{
+    if(!celebrate) return;
+    const t=setTimeout(()=>setCelebrate(null),2600);
+    return ()=>clearTimeout(t);
+  },[celebrate?.key]);
+
   if(!games.length) return null;
   return (
     <div className="wc-livebar">
+      {celebrate&&<><GoalBalls key={celebrate.key}/><div className="wc-goal-shout" key={`s${celebrate.key}`}>GOOOAAAL!</div></>}
       <span className="wc-livebar-tag"><span className="wc-live-dot"/>Live now</span>
       <div className="wc-livebar-games">
         {games.map(g=>{
           const h=TEAM_BY_CODE[g.homeCode], a=TEAM_BY_CODE[g.awayCode];
+          const goal=celebrate?.fixtureId===g.fixtureId;
           return (
-            <button className="wc-livebar-game" key={g.fixtureId} onClick={()=>onOpen(g.fixtureId)}
+            <button className={`wc-livebar-game${goal?" wc-livebar-game-goal":""}`}
+              key={g.fixtureId+(goal?`-${celebrate!.key}`:"")} onClick={()=>onOpen(g.fixtureId)}
               title={`${h?.name} vs ${a?.name} — open match detail`}>
               <span className="wc-livebar-clock">{g.clock||g.status}</span>
               <span className="wc-livebar-teams">
@@ -3081,7 +3123,34 @@ const CSS = `
 .wc-bracket-note{display:flex;align-items:flex-start;gap:.5rem;max-width:760px;margin:0 0 1rem;font-size:.74rem;line-height:1.5;color:var(--chalk-dim);background:var(--pitch-card);border:1px solid var(--pitch-line);border-left:3px solid var(--gold);border-radius:8px;padding:.6rem .8rem;}
 .wc-bracket-note svg{color:var(--gold);flex-shrink:0;margin-top:.1rem;}
 
-.wc-livebar{width:fit-content;max-width:1200px;margin:0 auto 1rem;display:flex;align-items:center;justify-content:center;gap:.7rem;background:linear-gradient(90deg,rgba(255,77,77,.14),rgba(255,77,77,.04));border:1px solid rgba(255,77,77,.4);border-radius:12px;padding:.55rem .8rem;flex-wrap:wrap;}
+.wc-livebar{position:relative;width:fit-content;max-width:1200px;margin:0 auto 1rem;display:flex;align-items:center;justify-content:center;gap:.7rem;background:linear-gradient(90deg,rgba(255,77,77,.14),rgba(255,77,77,.04));border:1px solid rgba(255,77,77,.4);border-radius:12px;padding:.55rem .8rem;flex-wrap:wrap;}
+/* ── Goal celebration ── */
+.wc-goal-balls{position:fixed;inset:0;pointer-events:none;z-index:60;overflow:hidden;}
+.wc-goal-ball{position:absolute;bottom:-50px;line-height:1;will-change:transform,opacity;animation-name:wc-ball-arc;animation-timing-function:cubic-bezier(.25,.7,.4,1);animation-fill-mode:both;}
+@keyframes wc-ball-arc{
+  0%{transform:translate(0,0) rotate(0);opacity:0;}
+  8%{opacity:1;}
+  45%{transform:translate(calc(var(--x)*.5),calc(-1 * var(--h))) rotate(calc(var(--r)*.5));}
+  100%{transform:translate(var(--x),22vh) rotate(var(--r));opacity:0;}
+}
+.wc-goal-shout{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;font-family:'Anton',sans-serif;font-size:clamp(2.2rem,9vw,5rem);color:var(--gold);text-shadow:0 3px 24px rgba(0,0,0,.55);letter-spacing:.04em;white-space:nowrap;pointer-events:none;animation:wc-goal-shout 2.5s ease-out forwards;}
+@keyframes wc-goal-shout{
+  0%{opacity:0;transform:translate(-50%,-50%) scale(.5) rotate(-4deg);}
+  12%{opacity:1;transform:translate(-50%,-50%) scale(1.15) rotate(2deg);}
+  26%{transform:translate(-50%,-50%) scale(1) rotate(0);}
+  78%{opacity:1;}
+  100%{opacity:0;transform:translate(-50%,-50%) scale(1.06);}
+}
+.wc-livebar-game-goal{animation:wc-card-goal 2.4s ease-out;z-index:2;}
+@keyframes wc-card-goal{
+  0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(215,163,61,0);border-color:var(--pitch-line);}
+  14%{transform:scale(1.2);box-shadow:0 0 26px 5px rgba(215,163,61,.75);border-color:var(--gold);}
+  50%{transform:scale(1.08);box-shadow:0 0 16px 2px rgba(215,163,61,.45);border-color:var(--gold);}
+}
+@media(prefers-reduced-motion:reduce){
+  .wc-goal-balls,.wc-goal-shout{display:none;}
+  .wc-livebar-game-goal{animation:none;border-color:var(--gold);}
+}
 .wc-livebar-tag{display:inline-flex;align-items:center;gap:.4rem;font-size:.66rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#ff8a8a;flex-shrink:0;}
 .wc-livebar-games{display:flex;gap:.5rem;flex-wrap:wrap;}
 .wc-livebar-game{display:inline-flex;align-items:center;gap:.5rem;background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:999px;padding:.3rem .75rem;color:var(--chalk);font:inherit;font-size:.78rem;font-weight:600;cursor:pointer;}
