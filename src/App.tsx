@@ -1757,6 +1757,23 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
   const byId=useMemo(()=>Object.fromEntries(ko.map(m=>[m.fixture.id,m])) as Record<string,ResolvedKo>,[ko]);
+  const wrapRef=useRef<HTMLDivElement|null>(null);
+  const finalRef=useRef<HTMLDivElement|null>(null);
+  useEffect(()=>{
+    const centerFinal=()=>{
+      const wrap=wrapRef.current;
+      const final=finalRef.current;
+      if(!wrap||!final) return;
+      const target=final.offsetLeft+(final.offsetWidth/2)-(wrap.clientWidth/2);
+      wrap.scrollTo({left:Math.max(0,target),behavior:"auto"});
+    };
+    const raf=requestAnimationFrame(centerFinal);
+    window.addEventListener("resize",centerFinal);
+    return ()=>{
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize",centerFinal);
+    };
+  },[ko.length]);
   const open=(m:ResolvedKo)=>{
     const id=m.fixture.id;
     if(koResults[id]||detailIds.has(id)||liveByFixture[id]) onOpenDetail(id);
@@ -1773,20 +1790,22 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
     </div>
   );
   return (
-    <div className="wc-br2-wrap">
-      <div className="wc-br2">
-        {col("R32",LEFT_ORDER.R32,"l","src",false)}
-        {col("R16",LEFT_ORDER.R16,"l","src",true)}
-        {col("QF",LEFT_ORDER.QF,"l","src",true)}
-        {col("SF",LEFT_ORDER.SF,"l","single",true)}
-        <div className="wc-br2-col wc-br2-c wc-br2-final">
-          <div className="wc-br2-head">{KO_ROUND_LABEL.F}</div>
-          <div className="wc-br2-body">{cardFor("ko-F-1")}</div>
+    <>
+      <div className="wc-br2-wrap" ref={wrapRef}>
+        <div className="wc-br2">
+          {col("R32",LEFT_ORDER.R32,"l","src",false)}
+          {col("R16",LEFT_ORDER.R16,"l","src",true)}
+          {col("QF",LEFT_ORDER.QF,"l","src",true)}
+          {col("SF",LEFT_ORDER.SF,"l","single",true)}
+          <div className="wc-br2-col wc-br2-c wc-br2-final" ref={finalRef}>
+            <div className="wc-br2-head">{KO_ROUND_LABEL.F}</div>
+            <div className="wc-br2-body">{cardFor("ko-F-1")}</div>
+          </div>
+          {col("SF",RIGHT_ORDER.SF,"r","single",true)}
+          {col("QF",RIGHT_ORDER.QF,"r","src",true)}
+          {col("R16",RIGHT_ORDER.R16,"r","src",true)}
+          {col("R32",RIGHT_ORDER.R32,"r","src",false)}
         </div>
-        {col("SF",RIGHT_ORDER.SF,"r","single",true)}
-        {col("QF",RIGHT_ORDER.QF,"r","src",true)}
-        {col("R16",RIGHT_ORDER.R16,"r","src",true)}
-        {col("R32",RIGHT_ORDER.R32,"r","src",false)}
       </div>
       {byId["ko-3P-1"]&&(
         <div className="wc-br2-third">
@@ -1794,7 +1813,7 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
           {cardFor("ko-3P-1")}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
