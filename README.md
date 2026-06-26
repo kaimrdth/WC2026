@@ -46,8 +46,7 @@ Everything updates automatically from public data. No manual score entry — thi
 | 📊 **Group standings** | All 12 groups, computed from real results, sortable, with qualification highlighting. |
 | 🎟️ **Third-place table** | The 2026 best-8-thirds wildcard race — **"as it stands,"** folding in live scores so the cutoff line moves in real time. |
 | 🏆 **Knockout bracket** | Projected from current standings until real KO games begin, then fills in with results. |
-| 🧭 **Pick a Team** | Trace any team's road to the final — reflects standings *right now* (incl. live games), and lets you swap in hypothetical **what-if** opponents. |
-| 👕 **Team profiles** | Squad, formation, narrative, captain — with the **last ESPN-confirmed XI** shown once a team has played. |
+| 👕 **Team cards** | Each team's full journey in one place: profile + ESPN-confirmed XI, group results (with match details), the group table, and the **knockout run** — real results once played, a preview while upcoming, and a terminal outcome (eliminated / runners-up / champions). |
 | 📋 **Match detail** | Per-match lineups, formations, and a parsed goal/card/sub timeline. |
 | 🤖 **AI daily digest** | A short, narrated briefing of the day — today's games, or a recap of the last matchday plus what's next. |
 | 📈 **Stats** | Top scorers, cards, and tournament tallies derived from the live feed. |
@@ -67,7 +66,7 @@ flowchart LR
     subgraph Browser["🖥️ Browser — src/App.tsx (React 19)"]
         Poll["Poll loop<br/>(every 30s in match window)"]
         State["Derived state<br/>standings · qualifiers<br/>live games · lineups"]
-        UI["Views<br/>Groups · Thirds · Knockout<br/>Pick a Team · Teams · Stats"]
+        UI["Views<br/>Groups · Thirds · Knockout<br/>Teams · Stats"]
         Poll --> State --> UI
     end
 
@@ -130,10 +129,9 @@ sequenceDiagram
 | --- | --- |
 | **Groups** | 12 group tables + a per-group fixture list with live/finished cards. |
 | **Third Place Table** | All 12 third-placed teams ranked; the top 8 advance. Updates live ("as it stands"). |
-| **Knockout** | The R32→Final bracket, projected then real. |
-| **Pick a Team** | Choose a team → see its projected path; toggle win-group vs runner-up; pick what-if opponents. |
+| **Knockout** | The R32→Final bracket, projected then real, with match previews. |
 | **Stats** | Scorers, cards, tournament tallies. |
-| **Teams** | All 48 teams: profile, formation, narrative, captain, confirmed/predicted XI, and scroll-aware team theming for open cards. |
+| **Teams** | All 48 teams: profile, formation, narrative, captain, confirmed/predicted XI, group results + table, the **knockout run** (results/preview/outcome), and scroll-aware team theming for open cards. |
 
 ---
 
