@@ -784,19 +784,18 @@ const KO_BY_WINNER_SLOT:Record<string,KoFixture>=Object.fromEntries(
   KO_FIXTURES.filter(f=>KO_WINNER_PREFIX[f.round]).map(f=>[`${KO_WINNER_PREFIX[f.round]} ${f.n} Winner`,f])
 );
 const koFeeders=(f:KoFixture):(KoFixture|undefined)[]=>[KO_BY_WINNER_SLOT[f.homeSlot],KO_BY_WINNER_SLOT[f.awaySlot]];
-const BRACKET_ORDER:Record<string,string[]>=(()=>{
-  const order:Record<string,string[]>={R32:[],R16:[],QF:[],SF:[],F:[]};
+// In-order DFS from a root fixture → each round's fixtures top→bottom (feeders adjacent).
+function koOrderFrom(root:KoFixture|undefined):Record<string,string[]>{
+  const order:Record<string,string[]>={R32:[],R16:[],QF:[],SF:[]};
+  if(!root) return order;
   const seen=new Set<string>();
-  const visit=(f:KoFixture)=>{                   // in-order: home subtree → self → away subtree
-    if(seen.has(f.id)) return; seen.add(f.id);
-    const [h,a]=koFeeders(f);
-    if(h) visit(h);
-    (order[f.round] ||= []).push(f.id);
-    if(a) visit(a);
-  };
-  const fin=KO_FIXTURES.find(f=>f.round==="F"); if(fin) visit(fin);
+  const visit=(f:KoFixture)=>{ if(seen.has(f.id))return; seen.add(f.id); const [h,a]=koFeeders(f); if(h)visit(h); (order[f.round] ||= []).push(f.id); if(a)visit(a); };
+  visit(root);
   return order;
-})();
+}
+// The two halves of the bracket = the two semifinal sub-trees (from the official draw).
+const LEFT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1));
+const RIGHT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===2));
 const TEAM_BY_NAME:Record<string,Team>=Object.fromEntries(TEAMS.map(t=>[t.name,t]));
 
 function matchInfoFor(id:string, koResults:Record<string,KoResult>, liveByFixture:Record<string,LiveGame>):MatchInfo|null{
@@ -1698,54 +1697,79 @@ function ThirdPlaceTableView({groupResults,liveByFixture,onSelectTeam}:{groupRes
   );
 }
 
-function KoCard({m,result,live,goals,canDetail,onOpenDetail,onSelectTeam,onPreviewKo}:{
-  m:ResolvedKo;result?:KoResult;live?:LiveGame;goals?:GoalEvent[];canDetail?:boolean;onOpenDetail:(id:string)=>void;
-  onSelectTeam:(c:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
+
+// Compact bracket card: two team rows (flag · name · score) + a small footer.
+function BracketCard({m,result,live,onOpen}:{
+  m:ResolvedKo;result?:KoResult;live?:LiveGame;onOpen:(m:ResolvedKo)=>void;
 }){
   const f=m.fixture;
-  const both=m.home.team&&m.away.team;
+  const win=result?koWinnerCode(result):null;
+  const goalFor=(code?:string)=>{
+    if(!code) return null;
+    if(result) return result.homeCode===code?result.homeGoals:result.awayCode===code?result.awayGoals:null;
+    if(live) return live.homeCode===code?live.homeGoals:live.awayCode===code?live.awayGoals:null;
+    return null;
+  };
+  const pkFor=(code?:string)=>result&&result.homeGoals===result.awayGoals&&code?(result.homeCode===code?result.pkHome:result.pkAway):undefined;
+  const teamRow=(side:KoSide)=>{
+    const t=side.team, g=goalFor(t?.code), pk=pkFor(t?.code);
+    return (
+      <div className={`wc-br2-team${t&&win===t.code?" wc-br2-win":""}${t?"":" wc-br2-tbd"}`}>
+        {t?<Flag code={t.code} className="wc-br2-flag"/>:<span className="wc-br2-flag-x"/>}
+        <span className="wc-br2-name">{t?t.name:side.label}</span>
+        {g!=null&&<span className="wc-br2-score">{g}{pk!=null?<span className="wc-br2-pk"> ({pk})</span>:null}</span>}
+      </div>
+    );
+  };
+  const foot=result?"Full time":live?<span className="wc-br2-live"><span className="wc-live-dot"/>{live.clock||"LIVE"}</span>:formatKickoff(f.kickoff).date;
   return (
-    <MatchCard match={{id:f.id,kickoff:f.kickoff,venue:f.venue,city:f.city}} isKnockout
-      teamA={m.home.team} teamB={m.away.team}
-      result={result} live={live} goals={goals}
-      homeLabel={m.home.label} awayLabel={m.away.label}
-      onSelectTeam={onSelectTeam}
-      canDetail={canDetail}
-      onOpenDetail={onOpenDetail}
-      onOpenKoPreview={both?()=>onPreviewKo(m.home.team!.code,m.away.team!.code,f):undefined}/>
+    <button className="wc-br2-card" onClick={()=>onOpen(m)} title={m.home.team&&m.away.team?`${m.home.team.name} v ${m.away.team.name}`:"Match"}>
+      <div className="wc-br2-teams">{teamRow(m.home)}{teamRow(m.away)}</div>
+      <div className="wc-br2-foot">{foot}</div>
+    </button>
   );
 }
 
-function KoBracket({ko,koResults,liveByFixture,goalsByFixture,detailIds,onOpenDetail,onSelectTeam,onPreviewKo}:{
+function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTeam,onPreviewKo}:{
   ko:ResolvedKo[];koResults:Record<string,KoResult>;liveByFixture:Record<string,LiveGame>;goalsByFixture:Record<string,GoalEvent[]>;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
   const byId=useMemo(()=>Object.fromEntries(ko.map(m=>[m.fixture.id,m])) as Record<string,ResolvedKo>,[ko]);
-  const rounds=["R32","R16","QF","SF","F"];
-  const card=(m:ResolvedKo)=>(
-    <KoCard m={m} result={koResults[m.fixture.id]} live={liveByFixture[m.fixture.id]} goals={goalsByFixture[m.fixture.id]}
-      canDetail={detailIds.has(m.fixture.id)||!!liveByFixture[m.fixture.id]?.eventId} onOpenDetail={onOpenDetail}
-      onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/>
+  const open=(m:ResolvedKo)=>{
+    const id=m.fixture.id;
+    if(koResults[id]||detailIds.has(id)||liveByFixture[id]) onOpenDetail(id);
+    else if(m.home.team&&m.away.team) onPreviewKo(m.home.team.code,m.away.team.code,m.fixture);
+  };
+  const cardFor=(id:string)=>{ const m=byId[id]; if(!m) return null;
+    return <div className="wc-br2-match" key={id}><BracketCard m={m} result={koResults[id]} live={liveByFixture[id]} onOpen={open}/></div>;
+  };
+  void onSelectTeam; // kept in props for caller compatibility; cards open the match, not a team
+  const col=(round:string,ids:string[],side:"l"|"r",kind:"src"|"single",hasIn:boolean)=>(
+    <div className={`wc-br2-col wc-br2-${side} wc-br2-${kind}${hasIn?" wc-br2-in":""}`} key={`${side}-${round}`}>
+      <div className="wc-br2-head">{KO_ROUND_LABEL[round]}</div>
+      <div className="wc-br2-body">{ids.map(cardFor)}</div>
+    </div>
   );
-  const third=byId["ko-3P-1"];
   return (
-    <div className="wc-br-wrap">
-      <div className="wc-br">
-        {rounds.map((r,ci)=>(
-          <div className={`wc-br-round${ci===rounds.length-1?" wc-br-round-last":""}`} key={r}>
-            <div className="wc-br-round-head">{KO_ROUND_LABEL[r]}</div>
-            <div className="wc-br-round-body">
-              {(BRACKET_ORDER[r]||[]).map(id=>{ const m=byId[id]; if(!m) return null;
-                return <div className="wc-br-match" key={id}><div className="wc-br-card">{card(m)}</div></div>;
-              })}
-            </div>
-          </div>
-        ))}
+    <div className="wc-br2-wrap">
+      <div className="wc-br2">
+        {col("R32",LEFT_ORDER.R32,"l","src",false)}
+        {col("R16",LEFT_ORDER.R16,"l","src",true)}
+        {col("QF",LEFT_ORDER.QF,"l","src",true)}
+        {col("SF",LEFT_ORDER.SF,"l","single",true)}
+        <div className="wc-br2-col wc-br2-c wc-br2-final">
+          <div className="wc-br2-head">{KO_ROUND_LABEL.F}</div>
+          <div className="wc-br2-body">{cardFor("ko-F-1")}</div>
+        </div>
+        {col("SF",RIGHT_ORDER.SF,"r","single",true)}
+        {col("QF",RIGHT_ORDER.QF,"r","src",true)}
+        {col("R16",RIGHT_ORDER.R16,"r","src",true)}
+        {col("R32",RIGHT_ORDER.R32,"r","src",false)}
       </div>
-      {third&&(
-        <div className="wc-br-third">
-          <div className="wc-br-round-head">Third-place play-off</div>
-          <div className="wc-br-card">{card(third)}</div>
+      {byId["ko-3P-1"]&&(
+        <div className="wc-br2-third">
+          <div className="wc-br2-head">Third-place play-off</div>
+          {cardFor("ko-3P-1")}
         </div>
       )}
     </div>
@@ -3617,24 +3641,45 @@ const CSS = `
 .wc-badge-out{background:transparent;color:var(--chalk-dim);border:1px solid var(--pitch-line);border-radius:999px;padding:.12rem .5rem;font-size:.62rem;font-weight:600;white-space:nowrap;}
 
 /* knockout */
-/* ── Knockout bracket: feeder-ordered columns with elbow connectors ── */
-.wc-br-wrap{overflow-x:auto;padding-bottom:.6rem;}
-.wc-br{display:flex;min-width:max-content;align-items:stretch;--br-gap:1rem;--br-line:rgba(244,241,232,.22);}
-.wc-br-round{display:flex;flex-direction:column;flex:0 0 auto;width:248px;}
-.wc-br-round-head{height:1.9rem;display:flex;align-items:center;justify-content:center;font-family:'Anton',sans-serif;letter-spacing:.03em;font-size:.82rem;text-transform:uppercase;color:var(--gold);}
-.wc-br-round-body{flex:1;display:flex;flex-direction:column;}
-.wc-br-match{flex:1;display:flex;flex-direction:column;justify-content:center;position:relative;padding:.35rem var(--br-gap);min-height:62px;}
-.wc-br-card{position:relative;z-index:1;}
-/* outgoing elbow: each match (except the Final column) sends a stub right + a half-height
-   vertical that joins it to its pair partner. odd = top of pair (line down), even = bottom (line up). */
-.wc-br-round:not(.wc-br-round-last) .wc-br-match::after{content:"";position:absolute;right:0;width:var(--br-gap);box-sizing:border-box;border-right:2px solid var(--br-line);}
-.wc-br-round:not(.wc-br-round-last) .wc-br-match:nth-child(odd)::after{top:50%;height:50%;border-top:2px solid var(--br-line);}
-.wc-br-round:not(.wc-br-round-last) .wc-br-match:nth-child(even)::after{bottom:50%;height:50%;border-bottom:2px solid var(--br-line);}
-/* incoming stub: every round after the first draws a line from the column edge into its card */
-.wc-br-round:not(:first-child) .wc-br-match::before{content:"";position:absolute;left:0;top:50%;width:var(--br-gap);height:2px;background:var(--br-line);}
-/* third-place play-off, shown apart from the main tree */
-.wc-br-third{margin-top:1rem;max-width:248px;}
-.wc-br-third .wc-br-round-head{justify-content:flex-start;}
+/* ── Two-sided knockout bracket (compact cards + elbow connectors) ── */
+.wc-br2-wrap{overflow-x:auto;padding-bottom:.6rem;}
+.wc-br2{display:flex;min-width:max-content;align-items:stretch;--g:.85rem;--ln:rgba(244,241,232,.22);}
+.wc-br2-col{display:flex;flex-direction:column;flex:0 0 auto;width:172px;}
+.wc-br2-head{height:1.7rem;display:flex;align-items:center;justify-content:center;font-family:'Anton',sans-serif;letter-spacing:.03em;font-size:.74rem;text-transform:uppercase;color:var(--gold);}
+.wc-br2-body{flex:1;display:flex;flex-direction:column;}
+.wc-br2-match{flex:1;display:flex;flex-direction:column;justify-content:center;position:relative;padding:.3rem var(--g);min-height:54px;}
+/* compact card */
+.wc-br2-card{position:relative;z-index:1;display:flex;flex-direction:column;width:100%;text-align:left;background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:8px;padding:.3rem .4rem;color:var(--chalk);font:inherit;cursor:pointer;overflow:hidden;}
+.wc-br2-card:hover{border-color:var(--gold);}
+.wc-br2-teams{display:flex;flex-direction:column;gap:.12rem;}
+.wc-br2-team{display:flex;align-items:center;gap:.35rem;font-size:.74rem;font-weight:600;min-width:0;}
+.wc-br2-team.wc-br2-win{color:var(--gold);}
+.wc-br2-team.wc-br2-tbd{color:var(--chalk-dim);font-style:italic;font-weight:500;}
+.wc-br2-flag{width:1rem;height:1rem;flex-shrink:0;}
+.wc-br2-flag-x{width:1rem;height:1rem;border-radius:2px;background:var(--pitch-line);flex-shrink:0;}
+.wc-br2-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wc-br2-score{font-family:'JetBrains Mono',monospace;font-weight:700;flex-shrink:0;}
+.wc-br2-pk{font-size:.6rem;color:var(--chalk-dim);}
+.wc-br2-foot{margin-top:.2rem;font-size:.58rem;color:var(--chalk-dim);letter-spacing:.02em;}
+.wc-br2-live{display:inline-flex;align-items:center;gap:.25rem;color:#ff8a8a;font-weight:700;}
+/* connectors — LEFT side: outgoing right, incoming left */
+.wc-br2-l.wc-br2-src .wc-br2-match::after{content:"";position:absolute;right:0;width:var(--g);box-sizing:border-box;border-right:2px solid var(--ln);}
+.wc-br2-l.wc-br2-src .wc-br2-match:nth-child(odd)::after{top:50%;height:50%;border-top:2px solid var(--ln);}
+.wc-br2-l.wc-br2-src .wc-br2-match:nth-child(even)::after{bottom:50%;height:50%;border-bottom:2px solid var(--ln);}
+.wc-br2-l.wc-br2-single .wc-br2-match::after{content:"";position:absolute;right:0;top:50%;width:var(--g);height:2px;background:var(--ln);}
+.wc-br2-l.wc-br2-in .wc-br2-match::before{content:"";position:absolute;left:0;top:50%;width:var(--g);height:2px;background:var(--ln);}
+/* connectors — RIGHT side: mirrored (outgoing left, incoming right) */
+.wc-br2-r.wc-br2-src .wc-br2-match::after{content:"";position:absolute;left:0;width:var(--g);box-sizing:border-box;border-left:2px solid var(--ln);}
+.wc-br2-r.wc-br2-src .wc-br2-match:nth-child(odd)::after{top:50%;height:50%;border-top:2px solid var(--ln);}
+.wc-br2-r.wc-br2-src .wc-br2-match:nth-child(even)::after{bottom:50%;height:50%;border-bottom:2px solid var(--ln);}
+.wc-br2-r.wc-br2-single .wc-br2-match::after{content:"";position:absolute;left:0;top:50%;width:var(--g);height:2px;background:var(--ln);}
+.wc-br2-r.wc-br2-in .wc-br2-match::before{content:"";position:absolute;right:0;top:50%;width:var(--g);height:2px;background:var(--ln);}
+/* centre Final: incoming from both semifinals */
+.wc-br2-final .wc-br2-match::before{content:"";position:absolute;left:0;top:50%;width:var(--g);height:2px;background:var(--ln);}
+.wc-br2-final .wc-br2-match::after{content:"";position:absolute;right:0;top:50%;width:var(--g);height:2px;background:var(--ln);}
+.wc-br2-c .wc-br2-card{border-color:var(--gold);}
+/* third-place play-off, apart from the tree */
+.wc-br2-third{margin:1rem auto 0;max-width:200px;display:flex;flex-direction:column;}
 
 /* knockout seed origin (1st · Grp A) */
 .wc-match-seed{font-size:.56rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--chalk-dim);}
