@@ -109,41 +109,60 @@ const GROUP_LETTERS = ["A","B","C","D","E","F","G","H","I","J","K","L"];
 const TEAM_BY_CODE: Record<string, Team> = Object.fromEntries(TEAMS.map(t => [t.code, t]));
 
 // ── Per-team theming ──────────────────────────────────────────────────────────
-// Each team has a primary (used to tint the dark background) and an accent (replaces
-// the gold). The app stays dark so light text never clashes; the accent is brightened
-// if needed so it reads both as text on the dark bg and as a fill behind dark text.
-const TEAM_COLORS: Record<string,{p:string;a:string}> = {
-  MEX:{p:"#006847",a:"#CE1126"}, KOR:{p:"#003478",a:"#CD2E3A"}, RSA:{p:"#007749",a:"#FFB81C"}, CZE:{p:"#11457E",a:"#D7141A"},
-  CAN:{p:"#C8102E",a:"#FF4C4C"}, SUI:{p:"#D52B1E",a:"#FF5C5C"}, QAT:{p:"#8A1538",a:"#E9C9D2"}, BIH:{p:"#002395",a:"#FFD100"},
-  BRA:{p:"#009C3B",a:"#FFDF00"}, MAR:{p:"#C1272D",a:"#2E9E5B"}, SCO:{p:"#0065BF",a:"#5AA0E0"}, HAI:{p:"#00209F",a:"#D21034"},
-  USA:{p:"#0A3161",a:"#B31942"}, PAR:{p:"#0038A8",a:"#D52B1E"}, AUS:{p:"#00843D",a:"#FFCD00"}, TUR:{p:"#E30A17",a:"#FF6B6B"},
-  GER:{p:"#BB0A1E",a:"#FFCC00"}, ECU:{p:"#0072CE",a:"#FFD100"}, CIV:{p:"#FF8200",a:"#009A44"}, CUW:{p:"#002B7F",a:"#F9E814"},
-  NED:{p:"#AE1C28",a:"#21468B"}, JPN:{p:"#BC002D",a:"#E84A5F"}, TUN:{p:"#E70013",a:"#FF5A5A"}, SWE:{p:"#006AA7",a:"#FECC00"},
-  BEL:{p:"#2B2B2B",a:"#FDDA24"}, IRN:{p:"#239F40",a:"#DA0000"}, EGY:{p:"#CE1126",a:"#C8A02E"}, NZL:{p:"#00247D",a:"#CC142B"},
-  ESP:{p:"#AA151B",a:"#F1BF00"}, URU:{p:"#5AAAEA",a:"#FCD116"}, KSA:{p:"#006C35",a:"#2E9E5B"}, CPV:{p:"#003893",a:"#CF2027"},
-  FRA:{p:"#0055A4",a:"#EF4135"}, SEN:{p:"#00853F",a:"#FDEF42"}, NOR:{p:"#BA0C2F",a:"#00205B"}, IRQ:{p:"#007A3D",a:"#CE1126"},
-  ARG:{p:"#6CACE4",a:"#FCBF49"}, AUT:{p:"#ED2939",a:"#FF6B6B"}, ALG:{p:"#006233",a:"#D21034"}, JOR:{p:"#007A3D",a:"#CE1126"},
-  POR:{p:"#006600",a:"#FF0000"}, COL:{p:"#003893",a:"#FCD116"}, UZB:{p:"#0099B5",a:"#1EB53A"}, COD:{p:"#007FFF",a:"#F7D518"},
-  ENG:{p:"#CE1124",a:"#FF5A5A"}, CRO:{p:"#FF0000",a:"#171796"}, PAN:{p:"#005293",a:"#D21034"}, GHA:{p:"#006B3F",a:"#FCD116"},
+// Each team has TWO colours — `a` tints the background, `b` tints the cards — plus an
+// `accent` (replaces the gold). Two hues let two-colour sides (Portugal red+green) read
+// as both. Default is a dark theme (light text); `mode:"light"` flips to a near-white
+// base with dark text for sides like Japan. Colours are auto-adjusted for legibility.
+interface TeamTheme { a:string; b:string; accent:string; mode?:"light"; }
+const TEAM_COLORS: Record<string,TeamTheme> = {
+  MEX:{a:"#006847",b:"#9D2235",accent:"#E63946"}, KOR:{a:"#003478",b:"#C5172A",accent:"#5A9BE0"}, RSA:{a:"#007749",b:"#001489",accent:"#FFB81C"}, CZE:{a:"#11457E",b:"#D7141A",accent:"#5A9BE0"},
+  CAN:{a:"#C8102E",b:"#7A0C1C",accent:"#FF5C5C"}, SUI:{a:"#D52B1E",b:"#7A0C12",accent:"#FF6B6B"}, QAT:{a:"#8A1538",b:"#5A0E25",accent:"#E0A9B8"}, BIH:{a:"#002395",b:"#FFD100",accent:"#FFD100"},
+  BRA:{a:"#009C3B",b:"#00318B",accent:"#FFDF00"}, MAR:{a:"#C1272D",b:"#006233",accent:"#2E9E5B"}, SCO:{a:"#0065BF",b:"#003E73",accent:"#5AA0E0"}, HAI:{a:"#00209F",b:"#D21034",accent:"#FF5C6E"},
+  USA:{a:"#0A3161",b:"#B31942",accent:"#7BA4D9"}, PAR:{a:"#0038A8",b:"#D52B1E",accent:"#FF5C5C"}, AUS:{a:"#00843D",b:"#001489",accent:"#FFCD00"}, TUR:{a:"#E30A17",b:"#8A0610",accent:"#FF6B6B"},
+  GER:{a:"#1A1A1A",b:"#BB0A1E",accent:"#FFCC00"}, ECU:{a:"#0072CE",b:"#D21034",accent:"#FFD100"}, CIV:{a:"#FF8200",b:"#009A44",accent:"#FF9E33"}, CUW:{a:"#002B7F",b:"#0A1E4D",accent:"#F9E814"},
+  NED:{a:"#C8102E",b:"#21468B",accent:"#FF6C00"}, JPN:{a:"#FFFFFF",b:"#BC002D",accent:"#BC002D",mode:"light"}, TUN:{a:"#E70013",b:"#8A000B",accent:"#FF5A5A"}, SWE:{a:"#006AA7",b:"#003E63",accent:"#FECC00"},
+  BEL:{a:"#1A1A1A",b:"#C8102E",accent:"#FDDA24"}, IRN:{a:"#239F40",b:"#DA0000",accent:"#3FBF63"}, EGY:{a:"#CE1126",b:"#1A1A1A",accent:"#C8A02E"}, NZL:{a:"#00247D",b:"#13183A",accent:"#CC142B"},
+  ESP:{a:"#AA151B",b:"#5C0A0E",accent:"#F1BF00"}, URU:{a:"#5AAAEA",b:"#2E6BA8",accent:"#FCD116"}, KSA:{a:"#006C35",b:"#00451F",accent:"#2E9E5B"}, CPV:{a:"#003893",b:"#CF2027",accent:"#5A9BE0"},
+  FRA:{a:"#0055A4",b:"#C8102E",accent:"#EF6B5E"}, SEN:{a:"#00853F",b:"#E31B23",accent:"#FDEF42"}, NOR:{a:"#BA0C2F",b:"#00205B",accent:"#7BA4D9"}, IRQ:{a:"#007A3D",b:"#CE1126",accent:"#3FBF63"},
+  ARG:{a:"#6CACE4",b:"#3A7BBF",accent:"#FCBF49"}, AUT:{a:"#ED2939",b:"#8A1019",accent:"#FF6B6B"}, ALG:{a:"#006233",b:"#D21034",accent:"#3FBF63"}, JOR:{a:"#1A1A1A",b:"#007A3D",accent:"#CE1126"},
+  POR:{a:"#C8102E",b:"#006600",accent:"#FFD700"}, COL:{a:"#003893",b:"#CE1126",accent:"#FCD116"}, UZB:{a:"#0099B5",b:"#1EB53A",accent:"#33C7E0"}, COD:{a:"#007FFF",b:"#CE1021",accent:"#F7D518"},
+  ENG:{a:"#CE1124",b:"#0A2472",accent:"#FF5C6E"}, CRO:{a:"#C8102E",b:"#171796",accent:"#FF5C6E"}, PAN:{a:"#005293",b:"#D21034",accent:"#5A9BE0"}, GHA:{a:"#006B3F",b:"#CE1126",accent:"#FCD116"},
 };
 const hexToRgb=(h:string)=>{const n=h.replace("#","");const v=n.length===3?n.split("").map(c=>c+c).join(""):n;const i=parseInt(v,16);return {r:(i>>16)&255,g:(i>>8)&255,b:i&255};};
 const rgbToHex=({r,g,b}:{r:number;g:number;b:number})=>{const c=(x:number)=>Math.round(Math.max(0,Math.min(255,x))).toString(16).padStart(2,"0");return `#${c(r)}${c(g)}${c(b)}`;};
 const mixHex=(a:string,b:string,t:number)=>{const x=hexToRgb(a),y=hexToRgb(b);return rgbToHex({r:x.r+(y.r-x.r)*t,g:x.g+(y.g-x.g)*t,b:x.b+(y.b-x.b)*t});};
 const relLum=(h:string)=>{const {r,g,b}=hexToRgb(h);const f=(c:number)=>{c/=255;return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4);};return 0.2126*f(r)+0.7152*f(g)+0.0722*f(b);};
 const brighten=(h:string,target=0.45)=>{let c=h,g=0;while(relLum(c)<target&&g<8){c=mixHex(c,"#ffffff",0.16);g++;}return c;};
+const darken=(h:string,target=0.42)=>{let c=h,g=0;while(relLum(c)>target&&g<8){c=mixHex(c,"#000000",0.16);g++;}return c;};
 const rgbaHex=(h:string,a:number)=>{const {r,g,b}=hexToRgb(h);return `rgba(${r},${g},${b},${a})`;};
 // Build the CSS-variable overrides for a team (or {} for the default green/gold theme).
 function teamTheme(code:string|null):CSSProperties{
   if(!code||!TEAM_COLORS[code]) return {};
-  const {p,a}=TEAM_COLORS[code];
-  const accent=brighten(a);
+  const {a,b,accent,mode}=TEAM_COLORS[code];
+  if(mode==="light"){
+    const ac=darken(accent);                          // dark enough to read on a light bg
+    const pitch=mixHex("#ffffff",a,0.05);
+    return {
+      ["--pitch" as string]:pitch,
+      ["--pitch-deep" as string]:mixHex(pitch,"#000000",0.06),
+      ["--pitch-card" as string]:mixHex("#ffffff",b,0.12),
+      ["--pitch-line" as string]:rgbaHex(ac,0.30),
+      ["--gold" as string]:ac,
+      ["--gold-soft" as string]:rgbaHex(ac,0.12),
+      ["--chalk" as string]:"#1c1c1c",
+      ["--chalk-dim" as string]:"#6a6a6a",
+    } as CSSProperties;
+  }
+  const ac=brighten(accent);                          // bright enough to read on the dark bg
   return {
-    ["--pitch" as string]:mixHex("#0a130d",p,0.18),
-    ["--pitch-deep" as string]:mixHex("#070f0a",p,0.12),
-    ["--pitch-card" as string]:mixHex("#0e1812",p,0.24),
-    ["--pitch-line" as string]:rgbaHex(accent,0.22),
-    ["--gold" as string]:accent,
-    ["--gold-soft" as string]:rgbaHex(accent,0.15),
+    ["--pitch" as string]:mixHex("#0a130d",a,0.18),
+    ["--pitch-deep" as string]:mixHex("#070f0a",a,0.12),
+    ["--pitch-card" as string]:mixHex("#0e1812",b,0.30),
+    ["--pitch-line" as string]:rgbaHex(ac,0.22),
+    ["--gold" as string]:ac,
+    ["--gold-soft" as string]:rgbaHex(ac,0.15),
+    ["--chalk" as string]:"#F4F1E8",
+    ["--chalk-dim" as string]:"#AFC0B9",
   } as CSSProperties;
 }
 const groupTeams = (letter: string) => TEAMS.filter(t => t.group === letter);
@@ -3006,13 +3025,15 @@ const CSS = `
 @property --pitch-line{syntax:"<color>";inherits:true;initial-value:rgba(244,241,232,.10);}
 @property --gold{syntax:"<color>";inherits:true;initial-value:#D7A33D;}
 @property --gold-soft{syntax:"<color>";inherits:true;initial-value:rgba(215,163,61,.15);}
+@property --chalk{syntax:"<color>";inherits:true;initial-value:#F4F1E8;}
+@property --chalk-dim{syntax:"<color>";inherits:true;initial-value:#9AADA4;}
 .wc-app{
   --pitch:#0F3D2E;--pitch-deep:#0A2B21;--pitch-card:#0e3224;--pitch-line:rgba(244,241,232,.10);
   --chalk:#F4F1E8;--chalk-dim:#9AADA4;--gold:#D7A33D;--gold-soft:rgba(215,163,61,.15);
   --green-win:#22543D;--red-loss:rgba(220,53,69,.10);
   font-family:'Space Grotesk',sans-serif;background:var(--pitch);color:var(--chalk);
   min-height:100vh;padding:1.5rem 1rem 3rem;box-sizing:border-box;
-  transition:--pitch .7s ease,--pitch-deep .7s ease,--pitch-card .7s ease,--pitch-line .7s ease,--gold .7s ease,--gold-soft .7s ease;
+  transition:--pitch .7s ease,--pitch-deep .7s ease,--pitch-card .7s ease,--pitch-line .7s ease,--gold .7s ease,--gold-soft .7s ease,--chalk .7s ease,--chalk-dim .7s ease;
 }
 @media(prefers-reduced-motion:reduce){.wc-app{transition:none;}}
 .wc-app *{box-sizing:border-box;}
