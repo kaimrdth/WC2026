@@ -2938,11 +2938,14 @@ function LooseBall({seed,onClose}:{seed:number;onClose:()=>void}) {
   const ballRef=useRef<HTMLButtonElement|null>(null);
   const stateRef=useRef({x:0,y:0,vx:0,vy:0,rot:0,size:52,last:0});
   const closeTimerRef=useRef<number|null>(null);
+  const onCloseRef=useRef(onClose);
   const [reduced,setReduced]=useState(false);
+
+  useEffect(()=>{ onCloseRef.current=onClose; },[onClose]);
 
   const scheduleClose=()=>{
     if(closeTimerRef.current!=null) window.clearTimeout(closeTimerRef.current);
-    closeTimerRef.current=window.setTimeout(onClose,45000);
+    closeTimerRef.current=window.setTimeout(()=>onCloseRef.current(),45000);
   };
 
   useEffect(()=>{
@@ -2986,7 +2989,7 @@ function LooseBall({seed,onClose}:{seed:number;onClose:()=>void}) {
     };
 
     scheduleClose();
-    const onKey=(e:KeyboardEvent)=>{ if(e.key==="Escape") onClose(); };
+    const onKey=(e:KeyboardEvent)=>{ if(e.key==="Escape") onCloseRef.current(); };
     window.addEventListener("keydown",onKey);
     raf=requestAnimationFrame(step);
     return ()=>{
@@ -2994,7 +2997,7 @@ function LooseBall({seed,onClose}:{seed:number;onClose:()=>void}) {
       if(closeTimerRef.current!=null) window.clearTimeout(closeTimerRef.current);
       window.removeEventListener("keydown",onKey);
     };
-  },[seed,reduced,onClose]);
+  },[seed,reduced]);
 
   if(reduced) return null;
   const kick=(e:PointerEvent<HTMLButtonElement>)=>{
