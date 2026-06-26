@@ -774,6 +774,29 @@ const KO_FIXTURES: KoFixture[] = [
 ];
 const KO_FIXTURE_BY_ID: Record<string, KoFixture> = Object.fromEntries(KO_FIXTURES.map(f=>[f.id,f]));
 const KO_ROUND_LABEL:Record<string,string>={R32:"Round of 32",R16:"Round of 16",QF:"Quarterfinals",SF:"Semifinals","3P":"Third place",F:"Final"};
+
+// ── Bracket layout order ──────────────────────────────────────────────────────
+// The official draw doesn't pair feeders in fixture-number order (R16-1 ← R32-1 & R32-3),
+// so we walk the feeder tree from the Final to order each round top→bottom such that a
+// match's two feeders are vertically adjacent — required for the connector lines.
+const KO_WINNER_PREFIX:Record<string,string>={R32:"Round of 32",R16:"Round of 16",QF:"Quarterfinal",SF:"Semifinal"};
+const KO_BY_WINNER_SLOT:Record<string,KoFixture>=Object.fromEntries(
+  KO_FIXTURES.filter(f=>KO_WINNER_PREFIX[f.round]).map(f=>[`${KO_WINNER_PREFIX[f.round]} ${f.n} Winner`,f])
+);
+const koFeeders=(f:KoFixture):(KoFixture|undefined)[]=>[KO_BY_WINNER_SLOT[f.homeSlot],KO_BY_WINNER_SLOT[f.awaySlot]];
+const BRACKET_ORDER:Record<string,string[]>=(()=>{
+  const order:Record<string,string[]>={R32:[],R16:[],QF:[],SF:[],F:[]};
+  const seen=new Set<string>();
+  const visit=(f:KoFixture)=>{                   // in-order: home subtree → self → away subtree
+    if(seen.has(f.id)) return; seen.add(f.id);
+    const [h,a]=koFeeders(f);
+    if(h) visit(h);
+    (order[f.round] ||= []).push(f.id);
+    if(a) visit(a);
+  };
+  const fin=KO_FIXTURES.find(f=>f.round==="F"); if(fin) visit(fin);
+  return order;
+})();
 const TEAM_BY_NAME:Record<string,Team>=Object.fromEntries(TEAMS.map(t=>[t.name,t]));
 
 function matchInfoFor(id:string, koResults:Record<string,KoResult>, liveByFixture:Record<string,LiveGame>):MatchInfo|null{
@@ -1697,36 +1720,34 @@ function KoBracket({ko,koResults,liveByFixture,goalsByFixture,detailIds,onOpenDe
   ko:ResolvedKo[];koResults:Record<string,KoResult>;liveByFixture:Record<string,LiveGame>;goalsByFixture:Record<string,GoalEvent[]>;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
-  const byRound=(r:string)=>ko.filter(m=>m.fixture.round===r);
+  const byId=useMemo(()=>Object.fromEntries(ko.map(m=>[m.fixture.id,m])) as Record<string,ResolvedKo>,[ko]);
+  const rounds=["R32","R16","QF","SF","F"];
+  const card=(m:ResolvedKo)=>(
+    <KoCard m={m} result={koResults[m.fixture.id]} live={liveByFixture[m.fixture.id]} goals={goalsByFixture[m.fixture.id]}
+      canDetail={detailIds.has(m.fixture.id)||!!liveByFixture[m.fixture.id]?.eventId} onOpenDetail={onOpenDetail}
+      onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/>
+  );
+  const third=byId["ko-3P-1"];
   return (
-    <div className="wc-bracket-scroll">
-      {["R32","R16","QF","SF","F"].map((r,colIdx)=>{
-        const matches=byRound(r);
-        return (
-          <div className={`wc-bracket-col${colIdx>0?" wc-bracket-col-feeds":""}`} key={r}>
-            <div className="wc-bracket-col-head"><span>{KO_ROUND_LABEL[r]}</span><span className="wc-bracket-col-count">{matches.length}</span></div>
-            <div className="wc-bracket-col-body">
-              {matches.map(m=>(
-                <div className="wc-bracket-slot" key={m.fixture.id}><KoCard m={m}
-                  result={koResults[m.fixture.id]} live={liveByFixture[m.fixture.id]} goals={goalsByFixture[m.fixture.id]}
-                  canDetail={detailIds.has(m.fixture.id)||!!liveByFixture[m.fixture.id]?.eventId} onOpenDetail={onOpenDetail}
-                  onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/></div>
-              ))}
+    <div className="wc-br-wrap">
+      <div className="wc-br">
+        {rounds.map((r,ci)=>(
+          <div className={`wc-br-round${ci===rounds.length-1?" wc-br-round-last":""}`} key={r}>
+            <div className="wc-br-round-head">{KO_ROUND_LABEL[r]}</div>
+            <div className="wc-br-round-body">
+              {(BRACKET_ORDER[r]||[]).map(id=>{ const m=byId[id]; if(!m) return null;
+                return <div className="wc-br-match" key={id}><div className="wc-br-card">{card(m)}</div></div>;
+              })}
             </div>
           </div>
-        );
-      })}
-      {byRound("3P").map(m=>(
-        <div className="wc-bracket-col" key={m.fixture.id}>
-          <div className="wc-bracket-col-head"><span>Third place</span></div>
-          <div className="wc-bracket-col-body">
-            <div className="wc-bracket-slot"><KoCard m={m}
-              result={koResults[m.fixture.id]} live={liveByFixture[m.fixture.id]} goals={goalsByFixture[m.fixture.id]}
-              canDetail={detailIds.has(m.fixture.id)||!!liveByFixture[m.fixture.id]?.eventId} onOpenDetail={onOpenDetail}
-              onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/></div>
-          </div>
+        ))}
+      </div>
+      {third&&(
+        <div className="wc-br-third">
+          <div className="wc-br-round-head">Third-place play-off</div>
+          <div className="wc-br-card">{card(third)}</div>
         </div>
-      ))}
+      )}
     </div>
   );
 }
@@ -2580,7 +2601,11 @@ const DIGEST_LINK_RE=(()=>{
     .map(n=>n.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
   return new RegExp(`(?<![\\p{L}])(?:Group [A-L]|${names.join("|")})(?![\\p{L}])`,"giu");
 })();
-type DigestSeg={t:"text"|"team"|"group";v:string;code?:string};
+type DigestSeg=
+  | {t:"text";v:string}
+  | {t:"team";v:string;code:string}
+  | {t:"group";v:string;code:string}
+  | {t:"match";v:string;a:string;b:string};
 function tokenizeDigest(text:string):DigestSeg[]{
   const out:DigestSeg[]=[]; let last=0; let m:RegExpExecArray|null;
   DIGEST_LINK_RE.lastIndex=0;
@@ -2594,18 +2619,47 @@ function tokenizeDigest(text:string):DigestSeg[]{
   if(last<text.length) out.push({t:"text",v:text.slice(last)});
   return out;
 }
-function DigestLinks({text,onSelectTeam,onSelectGroup}:{
+// "Team A <connective> Team B" → a single match link, when they actually share a fixture.
+// Strong connectives between the two names link directly; "and" only links when the prose
+// right after the pair carries a match cue ("…face off") — so "Spain and Uruguay in Group H"
+// (co-mention) stays two separate team links.
+const DIGEST_STRONG_CONN=/^[\s,]*(v|vs\.?|versus|faces?|facing|meets?|hosts?|against|beats?|edged?|defeated?|downs?|past|plays?|playing|takes?\s+on)[\s,]*$/i;
+const DIGEST_FOLLOW_CUE=/^[\s,]*(face|faces|facing|meet|meets|play|plays|clash|square\s+off|go\s+head|do\s+battle|lock\s+horns|off\b)/i;
+function mergeMatchups(segs:DigestSeg[], hasMatch:(a:string,b:string)=>boolean):DigestSeg[]{
+  const out:DigestSeg[]=[];
+  for(let i=0;i<segs.length;i++){
+    const s=segs[i], mid=segs[i+1], t2=segs[i+2];
+    if(s.t==="team"&&mid?.t==="text"&&t2?.t==="team"&&s.code!==t2.code){
+      let isMatch=DIGEST_STRONG_CONN.test(mid.v);
+      if(!isMatch&&/^[\s,]*and[\s,]*$/i.test(mid.v)){
+        const after=segs[i+3]?.t==="text"?(segs[i+3] as {v:string}).v:"";
+        isMatch=DIGEST_FOLLOW_CUE.test(after);
+      }
+      if(isMatch&&hasMatch(s.code,t2.code)){
+        out.push({t:"match",v:`${s.v}${mid.v}${t2.v}`,a:s.code,b:t2.code});
+        i+=2; continue;
+      }
+    }
+    out.push(s);
+  }
+  return out;
+}
+function DigestLinks({text,onSelectTeam,onSelectGroup,onMatch,hasMatch}:{
   text:string;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
+  onMatch:(a:string,b:string)=>void;hasMatch:(a:string,b:string)=>boolean;
 }){
-  const segs=useMemo(()=>tokenizeDigest(text),[text]);
-  return <>{segs.map((s,i)=>s.t==="text"
-    ? <span key={i}>{s.v}</span>
-    : <button key={i} className="wc-digest-link" onClick={()=>s.t==="team"?onSelectTeam(s.code!):onSelectGroup(s.code!)}>{s.v}</button>)}</>;
+  const segs=useMemo(()=>mergeMatchups(tokenizeDigest(text),hasMatch),[text,hasMatch]);
+  return <>{segs.map((s,i)=>{
+    if(s.t==="text") return <span key={i}>{s.v}</span>;
+    if(s.t==="match") return <button key={i} className="wc-digest-link wc-digest-matchlink" title="Open match" onClick={()=>onMatch(s.a,s.b)}>{s.v}</button>;
+    return <button key={i} className="wc-digest-link" onClick={()=>s.t==="team"?onSelectTeam(s.code):onSelectGroup(s.code)}>{s.v}</button>;
+  })}</>;
 }
 
 // Types out the digest, then swaps to the linkified version once fully revealed.
-function Typewriter({text,onSelectTeam,onSelectGroup,speed=16}:{
-  text:string;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;speed?:number;
+function Typewriter({text,onSelectTeam,onSelectGroup,onMatch,hasMatch,speed=16}:{
+  text:string;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
+  onMatch:(a:string,b:string)=>void;hasMatch:(a:string,b:string)=>boolean;speed?:number;
 }){
   const [n,setN]=useState(0);
   useEffect(()=>{
@@ -2613,18 +2667,29 @@ function Typewriter({text,onSelectTeam,onSelectGroup,speed=16}:{
     let i=0; const id=setInterval(()=>{ i+=2; setN(Math.min(i,text.length)); if(i>=text.length) clearInterval(id); },speed);
     return ()=>clearInterval(id);
   },[text,speed]);
-  if(n>=text.length) return <DigestLinks text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>;
+  if(n>=text.length) return <DigestLinks text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup} onMatch={onMatch} hasMatch={hasMatch}/>;
   return <>{text.slice(0,n)}<span className="wc-caret"/></>;
 }
 
-function DigestPanel({groupResults,koResults,liveGames,matchesPlayed,onSelectTeam,onSelectGroup}:{
-  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;liveGames:LiveGame[];matchesPlayed:number;
+function DigestPanel({groupResults,koResults,liveGames,matchesPlayed,detailIds,onSelectTeam,onSelectGroup,onOpenPreview,onOpenDetail,onPreviewKo}:{
+  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;liveGames:LiveGame[];matchesPlayed:number;detailIds:Set<string>;
   onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
+  onOpenPreview:(id:string)=>void;onOpenDetail:(id:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
   const [text,setText]=useState("");
   const [status,setStatus]=useState<"idle"|"loading"|"error">("idle");
   const [err,setErr]=useState("");
   const facts=useMemo(()=>buildDigestFacts(groupResults,koResults,liveGames),[groupResults,koResults,liveGames]);
+  // Match-link wiring: a referenced matchup opens its preview (upcoming) or details (played/live).
+  const koMatchups=useMemo(()=>resolveKnockout(groupResults,koResults),[groupResults,koResults]);
+  const koMatchOf=useCallback((a:string,b:string)=>koMatchups.find(m=>{const c=[m.home.team?.code,m.away.team?.code];return c.includes(a)&&c.includes(b);})??null,[koMatchups]);
+  const hasMatch=useCallback((a:string,b:string)=>!!FIXTURE_BY_PAIR[pairKey(a,b)]||!!koMatchOf(a,b),[koMatchOf]);
+  const onMatch=useCallback((a:string,b:string)=>{
+    const g=FIXTURE_BY_PAIR[pairKey(a,b)];
+    if(g){ (groupResults[g.id]||detailIds.has(g.id))?onOpenDetail(g.id):onOpenPreview(g.id); return; }
+    const m=koMatchOf(a,b);
+    if(m){ (koResults[m.fixture.id]||detailIds.has(m.fixture.id))?onOpenDetail(m.fixture.id):onPreviewKo(a,b,m.fixture); }
+  },[groupResults,koResults,detailIds,koMatchOf,onOpenDetail,onOpenPreview,onPreviewKo]);
   const fallback=useMemo(()=>fallbackDigest(groupResults,koResults,liveGames),[groupResults,koResults,liveGames]);
   // Regenerate on goals / full-time / new kickoffs, not on every clock tick.
   const sig=useMemo(()=>digestSignature(groupResults,koResults,liveGames),[groupResults,koResults,liveGames]);
@@ -2705,7 +2770,7 @@ function DigestPanel({groupResults,koResults,liveGames,matchesPlayed,onSelectTea
       </div>
       <p className="wc-digest-body">
         {text
-          ? <Typewriter key={gen} text={`${timeGreeting()} — ${text}`} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
+          ? <Typewriter key={gen} text={`${timeGreeting()} — ${text}`} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup} onMatch={onMatch} hasMatch={hasMatch}/>
           : status==="error"
             ? <span className="wc-digest-err">Couldn’t generate the digest — {err}. <button className="wc-digest-retry" onClick={()=>generate(true)}>Retry</button></span>
             : <span className="wc-digest-loading">Generating today’s briefing…</span>}
@@ -3015,7 +3080,9 @@ export default function App() {
         </div>
       </header>
 
-      {DIGEST_ENABLED&&<DigestPanel groupResults={groupResults} koResults={koResults} liveGames={liveGames} matchesPlayed={liveMatchesPlayed} onSelectTeam={goToTeam} onSelectGroup={goToGroup}/>}
+      {DIGEST_ENABLED&&<DigestPanel groupResults={groupResults} koResults={koResults} liveGames={liveGames} matchesPlayed={liveMatchesPlayed} detailIds={detailIds}
+        onSelectTeam={goToTeam} onSelectGroup={goToGroup}
+        onOpenPreview={setPreviewId} onOpenDetail={setDetailId} onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})}/>}
 
       <LiveBanner games={liveGames} onOpen={setDetailId}/>
 
@@ -3309,6 +3376,8 @@ const CSS = `
 .wc-caret{display:inline-block;width:.5rem;height:1em;background:var(--gold);margin-left:1px;vertical-align:text-bottom;animation:wc-blink 1s step-end infinite;}
 .wc-digest-link{display:inline;background:none;border:none;padding:0;margin:0;font:inherit;color:var(--gold);font-weight:700;cursor:pointer;border-bottom:1px solid rgba(215,163,61,.35);line-height:inherit;}
 .wc-digest-link:hover{border-bottom-color:var(--gold);background:rgba(215,163,61,.1);}
+/* Match links (two teams playing each other) — dashed underline to distinguish from a team link. */
+.wc-digest-matchlink{border-bottom-style:dashed;}
 @keyframes wc-blink{50%{opacity:0;}}
 
 /* projected-bracket note */
@@ -3548,18 +3617,24 @@ const CSS = `
 .wc-badge-out{background:transparent;color:var(--chalk-dim);border:1px solid var(--pitch-line);border-radius:999px;padding:.12rem .5rem;font-size:.62rem;font-weight:600;white-space:nowrap;}
 
 /* knockout */
-.wc-bracket-scroll{display:flex;gap:0;overflow-x:auto;padding-bottom:.5rem;align-items:stretch;}
-.wc-bracket-col{min-width:336px;border-right:1px solid var(--pitch-line);padding:0 .9rem;display:flex;flex-direction:column;}
-.wc-bracket-col:last-child{border-right:none;}
-.wc-bracket-col-head{display:flex;align-items:center;justify-content:space-between;gap:.4rem;font-family:'Anton',sans-serif;letter-spacing:.02em;font-size:.9rem;text-transform:uppercase;padding-bottom:.5rem;border-bottom:1px solid var(--pitch-line);margin-bottom:.5rem;}
-.wc-bracket-col-count{font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;color:var(--gold);background:var(--gold-soft);border:1px solid rgba(215,163,61,.35);border-radius:999px;padding:.05rem .4rem;}
-/* top-aligned columns: later rounds stay compact instead of stretching to the
-   full height of the 16-match Round of 32 (which left huge gaps to scroll past) */
-.wc-bracket-col-body{display:flex;flex-direction:column;gap:.6rem;}
-.wc-bracket-slot{position:relative;}
-/* connector tick hinting that each match is fed from the previous round */
-.wc-bracket-col-feeds .wc-bracket-slot::before{content:"";position:absolute;left:-.95rem;top:50%;width:.95rem;height:1px;background:var(--pitch-line);}
-.wc-bracket-empty{color:var(--chalk-dim);font-size:.76rem;padding:.8rem 0;text-align:center;}
+/* ── Knockout bracket: feeder-ordered columns with elbow connectors ── */
+.wc-br-wrap{overflow-x:auto;padding-bottom:.6rem;}
+.wc-br{display:flex;min-width:max-content;align-items:stretch;--br-gap:1rem;--br-line:rgba(244,241,232,.22);}
+.wc-br-round{display:flex;flex-direction:column;flex:0 0 auto;width:248px;}
+.wc-br-round-head{height:1.9rem;display:flex;align-items:center;justify-content:center;font-family:'Anton',sans-serif;letter-spacing:.03em;font-size:.82rem;text-transform:uppercase;color:var(--gold);}
+.wc-br-round-body{flex:1;display:flex;flex-direction:column;}
+.wc-br-match{flex:1;display:flex;flex-direction:column;justify-content:center;position:relative;padding:.35rem var(--br-gap);min-height:62px;}
+.wc-br-card{position:relative;z-index:1;}
+/* outgoing elbow: each match (except the Final column) sends a stub right + a half-height
+   vertical that joins it to its pair partner. odd = top of pair (line down), even = bottom (line up). */
+.wc-br-round:not(.wc-br-round-last) .wc-br-match::after{content:"";position:absolute;right:0;width:var(--br-gap);box-sizing:border-box;border-right:2px solid var(--br-line);}
+.wc-br-round:not(.wc-br-round-last) .wc-br-match:nth-child(odd)::after{top:50%;height:50%;border-top:2px solid var(--br-line);}
+.wc-br-round:not(.wc-br-round-last) .wc-br-match:nth-child(even)::after{bottom:50%;height:50%;border-bottom:2px solid var(--br-line);}
+/* incoming stub: every round after the first draws a line from the column edge into its card */
+.wc-br-round:not(:first-child) .wc-br-match::before{content:"";position:absolute;left:0;top:50%;width:var(--br-gap);height:2px;background:var(--br-line);}
+/* third-place play-off, shown apart from the main tree */
+.wc-br-third{margin-top:1rem;max-width:248px;}
+.wc-br-third .wc-br-round-head{justify-content:flex-start;}
 
 /* knockout seed origin (1st · Grp A) */
 .wc-match-seed{font-size:.56rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--chalk-dim);}
