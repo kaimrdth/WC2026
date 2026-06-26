@@ -2,9 +2,12 @@
 
 A zero-config, auto-updating live tracker for the **2026 FIFA World Cup** — real scores,
 standings, the new third-place wildcard race, a projected knockout bracket, team profiles
-with **ESPN-confirmed lineups**, a "pick a team" path explorer, and an **AI daily digest**.
+with **ESPN-confirmed lineups**, team/match micro-digests, a "pick a team" path explorer,
+and an **AI daily digest**.
 Everything updates automatically from public data. No manual score entry — this is a
 **tracker, not a simulator**.
+
+![World Cup 2026 Live Tracker screenshot](assets/screencap1.png)
 
 <!-- Git / shields.io badges -->
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev)
@@ -28,7 +31,7 @@ Everything updates automatically from public data. No manual score entry — thi
 - [The views](#the-views)
 - [Interface polish](#interface-polish)
 - [ESPN-confirmed lineups](#espn-confirmed-lineups)
-- [AI daily digest](#ai-daily-digest)
+- [AI digests](#ai-digests)
 - [Run locally](#run-locally)
 - [Deploy](#deploy)
 - [Project structure](#project-structure)
@@ -43,12 +46,12 @@ Everything updates automatically from public data. No manual score entry — thi
 | Area | What you get |
 | --- | --- |
 | 🟢 **Live scores** | Real results + in-progress games, auto-refreshing every 30s during match windows. A live-now banner links straight to the match. |
-| 📊 **Group standings** | All 12 groups, computed from real results, sortable, with qualification highlighting. |
+| 📊 **Group standings** | All 12 groups, computed from real results, with qualification/elimination highlighting and a front-page team search. |
 | 🎟️ **Third-place table** | The 2026 best-8-thirds wildcard race — **"as it stands,"** folding in live scores so the cutoff line moves in real time. |
-| 🏆 **Knockout bracket** | Projected from current standings until real KO games begin, then fills in with results. |
-| 👕 **Team cards** | Each team's full journey in one place: profile + ESPN-confirmed XI, group results (with match details), the group table, and the **knockout run** — real results once played, a preview while upcoming, and a terminal outcome (eliminated / runners-up / champions). |
-| 📋 **Match detail** | Per-match lineups, formations, and a parsed goal/card/sub timeline. |
-| 🤖 **AI daily digest** | A short, narrated briefing of the day — today's games, or a recap of the last matchday plus what's next. |
+| 🏆 **Knockout bracket** | Projected from current standings until real KO games begin, then fills in with results; the final column is centered in the bracket scroller. |
+| 👕 **Team cards** | Each team's full journey in one place: profile + ESPN-confirmed XI, group results (with match details), the group table, next group match while groups are unfinished, and the **knockout run** once their group is complete. |
+| 📋 **Match detail** | Per-match lineups, formations, a parsed goal/card/sub timeline, and a short contextual recap. |
+| 🤖 **AI digests** | A short daily briefing plus three-sentence team/match context cards, all generated from ESPN/local facts only. |
 | 📈 **Stats** | Top scorers, cards, and tournament tallies derived from the live feed. |
 | 🎨 **Polish** | Neutral tournament shell, team-aware colour themes, live goal flourishes, and a tiny physics easter egg. |
 
@@ -58,8 +61,8 @@ Everything updates automatically from public data. No manual score entry — thi
 
 The entire client is a **single-file React app** (`src/App.tsx`). It fetches public,
 keyless ESPN endpoints directly from the browser, derives everything (standings,
-qualifiers, projections) on the client, and calls **one Netlify function** for the AI
-digest so the Gemini key never reaches the browser.
+qualifiers, projections) on the client, and calls **Netlify functions** for the AI
+digests so the Gemini key never reaches the browser.
 
 ```mermaid
 flowchart LR
@@ -67,7 +70,9 @@ flowchart LR
         Poll["Poll loop<br/>(every 30s in match window)"]
         State["Derived state<br/>standings · qualifiers<br/>live games · lineups"]
         UI["Views<br/>Groups · Thirds · Knockout<br/>Teams · Stats"]
+        Facts["Digest facts<br/>daily · team · match"]
         Poll --> State --> UI
+        State --> Facts
     end
 
     subgraph ESPN["🌐 ESPN public API (no key)"]
@@ -75,24 +80,28 @@ flowchart LR
         Summary["/summary?event=<id><br/>lineups · timeline"]
     end
 
-    subgraph Netlify["☁️ Netlify Function"]
+    subgraph Netlify["☁️ Netlify Functions"]
         Digest["/.netlify/functions/digest"]
+        Micro["/.netlify/functions/micro-digest"]
     end
 
     Gemini["✨ Google Gemini"]
 
     Poll -->|fetch| Scoreboard
     State -->|per-event fetch| Summary
-    UI -->|"POST { facts }"| Digest
+    Facts -->|"POST { facts }"| Digest
+    Facts -->|"POST { facts, cacheKey }"| Micro
     Digest -->|"GEMINI_API_KEY (server-side)"| Gemini
+    Micro -->|"GEMINI_API_KEY (server-side)"| Gemini
     Gemini -->|"{ text }"| Digest --> UI
+    Gemini -->|"{ text }"| Micro --> UI
 
     ESPN -.CORS-open, browser-direct.-> Browser
 ```
 
 **Key idea:** the app stores no scores of its own. It reads the truth from ESPN, recomputes
-standings and projections locally, and persists only two things to `localStorage` — the
-last ESPN-confirmed lineups and the cached daily digest.
+standings and projections locally, and persists only three things to `localStorage` — the
+last ESPN-confirmed lineups, the cached daily digest, and cached micro-digests.
 
 ---
 
@@ -127,11 +136,11 @@ sequenceDiagram
 
 | Nav item | What it shows |
 | --- | --- |
-| **Groups** | 12 group tables + a per-group fixture list with live/finished cards. |
+| **Groups** | 12 group tables + a per-group fixture list with live/finished cards, plus quick team search. |
 | **Third Place Table** | All 12 third-placed teams ranked; the top 8 advance. Updates live ("as it stands"). |
-| **Knockout** | The R32→Final bracket, projected then real, with match previews. |
+| **Knockout** | The R32→Final bracket, projected then real, with match previews and a centered final column. |
 | **Stats** | Scorers, cards, tournament tallies. |
-| **Teams** | All 48 teams: profile, formation, narrative, captain, confirmed/predicted XI, group results + table, the **knockout run** (results/preview/outcome), and scroll-aware team theming for open cards. |
+| **Teams** | All 48 teams: profile, formation, narrative, captain, confirmed/predicted XI, group results + table, AI context, next group match while active, the **knockout run** once eligible, and scroll-aware team theming for open cards. |
 
 ---
 
@@ -143,9 +152,9 @@ cards are open, scrolling between them hands the theme to the open card currentl
 view.
 
 There are a few lightweight motion details: live goal celebrations, animated status
-states, and a small hidden ball easter egg. The easter egg is intentionally nonessential,
-works with mouse or touch, respects reduced-motion preferences, and does not affect the
-tracker data or navigation.
+states, typewriter digests, and a small hidden ball easter egg. The easter egg is
+intentionally nonessential, works with mouse or touch, respects reduced-motion preferences,
+and does not affect the tracker data or navigation.
 
 ---
 
@@ -153,9 +162,9 @@ tracker data or navigation.
 
 Team XIs in the data are **predictions** until a team actually plays. Rather than label a
 prediction "Confirmed," the app pulls each team's **real published lineup** from ESPN's
-per-match summary endpoint and shows the **most recent confirmed XI** in the Teams view
-(and pre-match preview). The badge only reads **"Confirmed XI"** when the data is genuinely
-ESPN-sourced; otherwise it reads **"Predicted XI."**
+per-match summary endpoint and shows the **most recent ESPN XI** in the Teams view
+(and pre-match preview). The badge reads **"Possible XI"** when it is based on the latest
+ESPN-published starters, and **"Predicted XI"** before the team has any ESPN lineup data.
 
 ```mermaid
 flowchart TD
@@ -163,7 +172,7 @@ flowchart TD
     B -- no --> C[Show predicted XI · retry next poll]
     B -- yes --> D[Fetch /summary, parse rosters]
     D --> E[Store most-recent XI per team<br/>localStorage: wc26_lineups]
-    E --> F["Teams view: 'Confirmed XI · MDx v OPP'<br/>real formation + starters"]
+    E --> F["Teams view: 'Possible XI · MDx v OPP'<br/>real formation + starters"]
 ```
 
 Confirmed lineups and the set of already-fetched events persist across reloads, so a
@@ -172,21 +181,31 @@ re-fetched.
 
 ---
 
-## AI daily digest
+## AI digests
 
-A short, narrated briefing at the top of the app, generated by **Gemini** from the current
-tournament state. The API key **never** touches the client — it lives in a Netlify
-function that proxies the request.
+The app has two AI layers, both generated by **Gemini** from compact facts built in the
+client. The API key **never** touches the browser — it lives in Netlify functions that
+proxy the requests.
 
-**Content logic** picks its own focus:
+| Digest | Where it appears | Shape | Source facts |
+| --- | --- | --- | --- |
+| **Daily digest** | Top of the app | 2-3 short paragraphs | Today's/live/recent matches, upcoming fixtures, standings |
+| **Micro-digests** | Team cards, match previews, match detail modals | 3 sentences max | ESPN/local facts for that team or match only |
+
+The micro-digests are intentionally not grounded-search prompts. They use the same ESPN
+scoreboard/summary data the UI already trusts: standings, results, upcoming fixtures,
+confirmed/predicted formations, lineups, and match timelines. Team and group names inside
+the digest text are linkified so they can jump back into the app.
+
+The daily digest picks its own focus:
 - **Games today** (live, finished, or upcoming) → leads with them and what's at stake.
 - **No games today** → recaps the most recent matchday's results, then previews what's next.
 
 ### Rate-limit defenses
 
 Gemini's free tier limits **requests per minute**, and a naive "every browser calls the
-model" design trips it the moment a few people open the app at once. The digest is layered
-to keep calls to a minimum and never show a failure when it can avoid one:
+model" design trips it the moment a few people open the app at once. Both digest functions
+are layered to keep calls to a minimum and never show a failure when they can avoid one:
 
 | Layer | What it does | Why it matters |
 | --- | --- | --- |
@@ -196,7 +215,7 @@ to keep calls to a minimum and never show a failure when it can avoid one:
 | **L2 · Netlify Blobs** | Durable, **shared** cache across all visitors + instances | N visitors on the same state → **one** Gemini call, globally |
 | **Request coalescing** | Concurrent identical requests await a single in-flight call | Simultaneous loads can't fan out into N calls |
 | **Stale-on-failure** | On a rate limit/error, serve the last good digest (`stale`) | Users see content, not an error or a blank panel |
-| **Model fallback + `Retry-After`** | `2.5-flash` → `2.0-flash`; passes Gemini's backoff hint through | Absorbs transient overload; client backs off correctly |
+| **Model fallback + `Retry-After`** | Daily: `2.5-flash` → `2.5-flash-lite`; micro: `2.5-flash-lite` → `2.5-flash` | Absorbs transient overload; client backs off correctly |
 
 Net effect: a 5-person burst that would have been 5 model calls collapses to **1**, and an
 actual rate limit degrades to a slightly-stale digest instead of a visible failure. (A raw
@@ -242,10 +261,11 @@ sequenceDiagram
     end
 ```
 
-The model only narrates the facts it's given — it never invents scores, scorers, or
-fixtures. The model, prompt, and caching live in `netlify/functions/digest.mjs`; the
-durable shared cache uses **Netlify Blobs** (auto-configured in the Netlify runtime, and
-the function degrades to memory-only if it's ever unavailable).
+The models only narrate the facts they're given — they never invent scores, scorers,
+fixtures, injuries, or tactical news. The prompts and caching live in
+`netlify/functions/digest.mjs` and `netlify/functions/micro-digest.mjs`; the durable shared
+cache uses **Netlify Blobs** (auto-configured in the Netlify runtime, and the functions
+degrade to memory-only if it's ever unavailable).
 
 ---
 
@@ -256,10 +276,11 @@ npm install
 npm run dev            # http://localhost:5173 — scores, standings, stats, lineups all work
 ```
 
-> Under plain `npm run dev` the digest **function** isn't served, so the digest panel shows
-> a friendly error/loading state. Everything else works fully.
+> Under plain `npm run dev` the digest **functions** aren't served, so the digest panels
+> show deterministic fallback text or a friendly unavailable state. Everything else works
+> fully.
 
-To run the app **and** the digest function together:
+To run the app **and** the digest functions together:
 
 ```bash
 npm i -g netlify-cli                          # if needed
@@ -290,7 +311,7 @@ Hosted on **Netlify** (config in `netlify.toml`, all preset):
 | Node version | `22` |
 
 **One required env var:** set `GEMINI_API_KEY` in **Site settings → Environment variables**
-for the digest. Everything else is keyless.
+for the digests. Everything else is keyless.
 
 ---
 
@@ -304,7 +325,8 @@ worldcup-2026-standalone/
 │   └── main.tsx             # React root
 ├── netlify/
 │   └── functions/
-│       └── digest.mjs       # Gemini proxy (key stays server-side; retries + model fallback)
+│       ├── digest.mjs       # daily Gemini digest proxy + shared cache
+│       └── micro-digest.mjs # team/match Gemini micro-digests + shared cache
 ├── netlify.toml             # build + functions config
 ├── vite.config.ts
 └── package.json
@@ -321,7 +343,7 @@ worldcup-2026-standalone/
 - **Vite 7** build
 - **lucide-react** icons
 - **Netlify Functions** (serverless) for the AI proxy, with **Netlify Blobs** as the shared digest cache
-- **Google Gemini** for the daily digest
+- **Google Gemini** for the daily and micro-digests
 - **ESPN public API** for all match data (no key, CORS-open)
 
 ---
@@ -334,7 +356,8 @@ worldcup-2026-standalone/
   fills in; projected steps are clearly labeled.
 - The R32 "best third-placed" slots resolve once enough groups finish; until then those
   specific opponents read as TBD.
-- The digest needs `GEMINI_API_KEY`; without it the panel surfaces a clear error.
+- Digests need `GEMINI_API_KEY`; without it the daily panel surfaces a clear error and
+  micro-digests fall back to deterministic local copy.
 
 ---
 
