@@ -1080,7 +1080,7 @@ const GOAL_TAG:Partial<Record<GoalKind,string>>={penalty:" (P)",owngoal:" (OG)",
 function goalLine(g:GoalEvent){ return `${g.player} ${g.minute}${GOAL_TAG[g.kind]??""}`; }
 
 // Read-only match card (live tracker — scores come from the feed, never entered).
-function MatchCard({match, result, isKnockout=false, teamA, teamB, goals, onSelectTeam, canDetail, onOpenDetail, live, homeLabel, awayLabel, onOpenPreview}:{
+function MatchCard({match, result, isKnockout=false, teamA, teamB, goals, onSelectTeam, canDetail, onOpenDetail, live, homeLabel, awayLabel, onOpenPreview, onOpenKoPreview}:{
   match:{id:string;kickoff?:string;venue?:string;city?:string};
   result?:ScoreResult;
   isKnockout?:boolean;
@@ -1094,6 +1094,7 @@ function MatchCard({match, result, isKnockout=false, teamA, teamB, goals, onSele
   homeLabel?:string;   // knockout slot descriptor (e.g. "Winner A", "3rd A/B/C/D/F")
   awayLabel?:string;
   onOpenPreview?:(id:string)=>void;
+  onOpenKoPreview?:()=>void;   // knockout matchup preview (both teams resolved)
 }) {
   const kickoff=match.kickoff?formatKickoff(match.kickoff):null;
   const showLive=!!live&&result==null;
@@ -1184,6 +1185,11 @@ function MatchCard({match, result, isKnockout=false, teamA, teamB, goals, onSele
       )}
       {!isKnockout&&!played&&!showLive&&teamA&&teamB&&onOpenPreview&&(
         <button className="wc-match-detail-btn" onClick={()=>onOpenPreview(match.id)}>
+          Match preview ›
+        </button>
+      )}
+      {isKnockout&&!played&&!showLive&&teamA&&teamB&&onOpenKoPreview&&(
+        <button className="wc-match-detail-btn" onClick={onOpenKoPreview}>
           Match preview ›
         </button>
       )}
@@ -1512,17 +1518,19 @@ function ThirdPlaceTableView({groupResults,liveByFixture,onSelectTeam}:{groupRes
   );
 }
 
-function KoCard({m,onSelectTeam}:{m:ResolvedKo;onSelectTeam:(c:string)=>void}){
+function KoCard({m,onSelectTeam,onPreviewKo}:{m:ResolvedKo;onSelectTeam:(c:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void}){
   const f=m.fixture;
+  const both=m.home.team&&m.away.team;
   return (
     <MatchCard match={{id:f.id,kickoff:f.kickoff,venue:f.venue,city:f.city}} isKnockout
       teamA={m.home.team} teamB={m.away.team}
       homeLabel={m.home.label} awayLabel={m.away.label}
-      onSelectTeam={onSelectTeam}/>
+      onSelectTeam={onSelectTeam}
+      onOpenKoPreview={both?()=>onPreviewKo(m.home.team!.code,m.away.team!.code,f):undefined}/>
   );
 }
 
-function KoBracket({ko,onSelectTeam}:{ko:ResolvedKo[];onSelectTeam:(code:string)=>void}){
+function KoBracket({ko,onSelectTeam,onPreviewKo}:{ko:ResolvedKo[];onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void}){
   const byRound=(r:string)=>ko.filter(m=>m.fixture.round===r);
   return (
     <div className="wc-bracket-scroll">
@@ -1533,7 +1541,7 @@ function KoBracket({ko,onSelectTeam}:{ko:ResolvedKo[];onSelectTeam:(code:string)
             <div className="wc-bracket-col-head"><span>{KO_ROUND_LABEL[r]}</span><span className="wc-bracket-col-count">{matches.length}</span></div>
             <div className="wc-bracket-col-body">
               {matches.map(m=>(
-                <div className="wc-bracket-slot" key={m.fixture.id}><KoCard m={m} onSelectTeam={onSelectTeam}/></div>
+                <div className="wc-bracket-slot" key={m.fixture.id}><KoCard m={m} onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/></div>
               ))}
             </div>
           </div>
@@ -1543,7 +1551,7 @@ function KoBracket({ko,onSelectTeam}:{ko:ResolvedKo[];onSelectTeam:(code:string)
         <div className="wc-bracket-col" key={m.fixture.id}>
           <div className="wc-bracket-col-head"><span>Third place</span></div>
           <div className="wc-bracket-col-body">
-            <div className="wc-bracket-slot"><KoCard m={m} onSelectTeam={onSelectTeam}/></div>
+            <div className="wc-bracket-slot"><KoCard m={m} onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/></div>
           </div>
         </div>
       ))}
@@ -1551,7 +1559,7 @@ function KoBracket({ko,onSelectTeam}:{ko:ResolvedKo[];onSelectTeam:(code:string)
   );
 }
 
-function KoScheduleView({ko,onSelectTeam}:{ko:ResolvedKo[];onSelectTeam:(code:string)=>void}){
+function KoScheduleView({ko,onSelectTeam,onPreviewKo}:{ko:ResolvedKo[];onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void}){
   const days=useMemo(()=>{
     const sorted=[...ko].sort((a,b)=>a.fixture.kickoff.localeCompare(b.fixture.kickoff));
     const out:{day:string;key:string;matches:ResolvedKo[]}[]=[];
@@ -1578,8 +1586,12 @@ function KoScheduleView({ko,onSelectTeam}:{ko:ResolvedKo[];onSelectTeam:(code:st
           <div className="wc-sched-day-head">{day}</div>
           {matches.map(m=>{
             const f=m.fixture;
+            const both=m.home.team&&m.away.team;
+            const preview=both?()=>onPreviewKo(m.home.team!.code,m.away.team!.code,f):undefined;
             return (
-              <div className="wc-sched-row" key={f.id}>
+              <div className={`wc-sched-row${preview?" wc-sched-row-link":""}`} key={f.id}
+                onClick={preview} role={preview?"button":undefined} tabIndex={preview?0:undefined}
+                onKeyDown={preview?(e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); preview(); } }:undefined}>
                 <div className="wc-sched-main">
                   {renderSide(m.home,false)}
                   <span className="wc-sched-mid"><span className="wc-sched-time">{formatKickoff(f.kickoff).time}</span></span>
@@ -1598,7 +1610,7 @@ function KoScheduleView({ko,onSelectTeam}:{ko:ResolvedKo[];onSelectTeam:(code:st
   );
 }
 
-function KnockoutView({groupResults,onSelectTeam}:{groupResults:Record<string,ScoreResult>;onSelectTeam:(code:string)=>void}){
+function KnockoutView({groupResults,onSelectTeam,onPreviewKo}:{groupResults:Record<string,ScoreResult>;onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void}){
   const [view,setView]=useState<"bracket"|"schedule">("bracket");
   const ko=useMemo(()=>resolveKnockout(groupResults),[groupResults]);
   return (
@@ -1613,8 +1625,8 @@ function KnockoutView({groupResults,onSelectTeam}:{groupResults:Record<string,Sc
         <Info size={14}/> Real knockout schedule with dates &amp; venues. Round-of-32 matchups are projected from the current group standings; third-place qualifiers and later rounds fill in as results come through.
       </div>
       {view==="bracket"
-        ? <KoBracket ko={ko} onSelectTeam={onSelectTeam}/>
-        : <KoScheduleView ko={ko} onSelectTeam={onSelectTeam}/>}
+        ? <KoBracket ko={ko} onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/>
+        : <KoScheduleView ko={ko} onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/>}
     </>
   );
 }
@@ -2850,7 +2862,7 @@ export default function App() {
             detailIds={detailIds} onOpenDetail={setDetailId} onSelectTeam={goToTeam} onSelectGroup={goToGroup} focusTeam={focusTeam}/>
         )}
         {stage==="knockout"&&(
-          <KnockoutView groupResults={groupResults} onSelectTeam={goToTeam}/>
+          <KnockoutView groupResults={groupResults} onSelectTeam={goToTeam} onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})}/>
         )}
         {stage==="path"&&(
           <PathView groupResults={groupResults} liveByFixture={liveByFixture} onSelectTeam={goToTeam}
