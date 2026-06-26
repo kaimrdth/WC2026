@@ -2352,6 +2352,9 @@ function LiveBanner({games,onOpen}:{
 const DIGEST_ENABLED = true;
 const DIGEST_ENDPOINT = "/.netlify/functions/digest";
 const localDayKey = (d:Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+// The digest only generates while the tournament is on. After the day the final is played,
+// it switches to a fixed honorarium card and stops calling the model.
+const DIGEST_FINAL_DAY = (()=>{ const fin=KO_FIXTURES.find(f=>f.round==="F"); return fin?localDayKey(new Date(fin.kickoff)):"9999-12-31"; })();
 
 // Compact, factual summary of the tournament's current state for the model to
 // narrate from (so it never invents scores).
@@ -2564,12 +2567,15 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
     }finally{ pendingRef.current=false; }
   };
 
-  // Always show the digest — there's always something to say (today's games, or a
-  // recap + what's next). Regenerate whenever the state (facts) changes.
+  // There's always something to say while the tournament is on (today's games, or a recap
+  // + what's next). Regenerate whenever the state (a goal / full-time / new day) changes —
+  // and only inside the tournament window, so it never fires after the final's day.
+  const wrapped=localDayKey(new Date())>DIGEST_FINAL_DAY;
   const hasData=matchesPlayed>0||liveGames.length>0||ALL_GROUP_MATCHES.some(f=>!groupResults[f.id]);
-  useEffect(()=>{ if(hasData) generate(false); },[sig,hasData]); // eslint-disable-line
+  useEffect(()=>{ if(!wrapped&&hasData) generate(false); },[sig,hasData,wrapped]); // eslint-disable-line
 
-  if(!hasData) return null; // tournament over — nothing left to preview
+  if(wrapped) return <DigestHonorarium/>; // tournament's over — pay tribute, stop generating
+  if(!hasData) return null;
   return (
     <div className="wc-digest">
       <div className="wc-digest-head">
@@ -2585,6 +2591,28 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
             ? <span className="wc-digest-err">Couldn’t generate the digest — {err}. <button className="wc-digest-retry" onClick={()=>generate(true)}>Retry</button></span>
             : <span className="wc-digest-loading">Generating today’s briefing…</span>}
       </p>
+    </div>
+  );
+}
+
+// Shown once the tournament is over — a fixed tribute, no model calls.
+function DigestHonorarium(){
+  return (
+    <div className="wc-digest wc-digest-honor">
+      <div className="wc-digest-head">
+        <span className="wc-digest-tag"><Trophy size={13}/> That's full time</span>
+      </div>
+      <p className="wc-digest-body">
+        The 2026 FIFA World Cup is complete — the first 48-team finals, hosted across the
+        United States, Mexico, and Canada. Thanks for following every goal, upset, and late
+        twist with us. Until 2030.
+      </p>
+      <div className="wc-honor-stats">
+        <div className="wc-honor-stat"><span className="wc-honor-num">48</span><span className="wc-honor-label">teams</span></div>
+        <div className="wc-honor-stat"><span className="wc-honor-num">104</span><span className="wc-honor-label">matches</span></div>
+        <div className="wc-honor-stat"><span className="wc-honor-num">16</span><span className="wc-honor-label">host cities</span></div>
+        <div className="wc-honor-stat"><span className="wc-honor-num">1</span><span className="wc-honor-label">champion</span></div>
+      </div>
     </div>
   );
 }
@@ -2986,6 +3014,11 @@ const CSS = `
 
 /* AI daily digest */
 .wc-digest{max-width:1200px;margin:0 auto 1rem;background:linear-gradient(120deg,rgba(215,163,61,.1),rgba(215,163,61,.02));border:1px solid rgba(215,163,61,.3);border-radius:14px;padding:.9rem 1.1rem;}
+.wc-digest-honor{background:linear-gradient(120deg,rgba(215,163,61,.18),rgba(215,163,61,.04));border-color:rgba(215,163,61,.5);}
+.wc-honor-stats{display:flex;flex-wrap:wrap;gap:1.4rem;margin-top:.7rem;}
+.wc-honor-stat{display:flex;flex-direction:column;line-height:1;}
+.wc-honor-num{font-family:'Anton',sans-serif;font-size:1.5rem;color:var(--gold);}
+.wc-honor-label{font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;color:var(--chalk-dim);margin-top:.2rem;}
 .wc-digest-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.45rem;}
 .wc-digest-tag{display:inline-flex;align-items:center;gap:.4rem;font-size:.64rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);}
 .wc-digest-refresh{display:inline-flex;background:transparent;border:1px solid var(--pitch-line);border-radius:7px;color:var(--chalk-dim);padding:.25rem;}
