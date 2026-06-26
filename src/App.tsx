@@ -3255,9 +3255,11 @@ const CSS = `
   /* match-detail modal: tighter header so team names don't crowd the score */
   .wc-modal{padding:1rem;}
   .wc-modal-close{top:.55rem;right:.55rem;}
-  .wc-detail-score{padding:.2rem .2rem 1rem;gap:.5rem;}
-  .wc-detail-team-btn{font-size:.8rem;gap:.3rem;}
-  .wc-detail-flag{width:1.3rem;height:1.3rem;}
+  .wc-detail-score{padding:.2rem .4rem 1rem;gap:.4rem;align-items:flex-start;}
+  /* Stack the flag centered under the team name so the circles stay inside the border */
+  .wc-detail-team-btn{font-size:.8rem;gap:.35rem;flex-direction:column-reverse;align-items:center;text-align:center;min-width:0;}
+  .wc-detail-team-right{flex-direction:column;text-align:center;justify-content:flex-start;}
+  .wc-detail-flag{width:1.5rem;height:1.5rem;}
   .wc-detail-score-num{font-size:1.6rem;}
 
   /* timeline: less side gutter on small screens */
