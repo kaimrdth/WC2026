@@ -701,17 +701,44 @@ async function fetchMatchDetail(eventId:string):Promise<MatchDetail> {
 // "confirmed" when it comes from here — the static TEAM_PROFILES XIs are predictions.
 interface ConfirmedXI { code:string; formation:string; xi:Player[]; fixtureId:string; kickoffMs:number; }
 
-const lastName=(n:string)=>{const p=n.trim().split(" ");return p.length>1?p.slice(1).join(" "):n;};
+const PLAYER_CLUB_OVERRIDES: Record<string,string> = {
+  // "TEAM|normalized player name": "Club"
+};
+
+const cleanPlayerName=(n:string)=>n
+  .replace(/\s*\(C\)\s*/gi," ")
+  .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+  .replace(/[.'’]/g,"")
+  .replace(/-/g," ")
+  .replace(/\b(jr|sr|ii|iii|iv)\b/gi,"")
+  .replace(/\s+/g," ")
+  .trim()
+  .toLowerCase();
+const lastName=(n:string)=>{
+  const p=cleanPlayerName(n).split(" ").filter(Boolean);
+  return p.length>1?p[p.length-1]:p[0]??"";
+};
+const clubOverrideKey=(code:string,name:string)=>`${code}|${cleanPlayerName(name)}`;
 
 // Convert an ESPN roster into the Player[] shape the pitch diagram expects, sorted
 // by formation place (GK → attack). Club is enriched from the static squad data.
 function detailTeamToXI(r:DetailTeam):Player[]{
-  const clubByName=new Map<string,string>();
+  const clubByFullName=new Map<string,string>();
+  const clubByLastName=new Map<string,string>();
   const prof=TEAM_PROFILES[r.code];
-  if(prof) for(const p of prof.xi){ if(p.name) clubByName.set(lastName(p.name).toLowerCase(),p.club ?? ""); }
+  if(prof) for(const p of prof.xi){
+    if(!p.name||!p.club) continue;
+    const full=cleanPlayerName(p.name);
+    const last=lastName(p.name);
+    if(full) clubByFullName.set(full,p.club);
+    if(last&&!clubByLastName.has(last)) clubByLastName.set(last,p.club);
+  }
   return r.starters.map(p=>({
     name: p.captain?`${p.name} (C)`:p.name,
-    club: clubByName.get(lastName(p.name).toLowerCase()) ?? "",
+    club: PLAYER_CLUB_OVERRIDES[clubOverrideKey(r.code,p.name)]
+      ?? clubByFullName.get(cleanPlayerName(p.name))
+      ?? clubByLastName.get(lastName(p.name))
+      ?? "",
     pos: p.pos || "",
   }));
 }
