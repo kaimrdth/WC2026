@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import type { ReactNode, CSSProperties } from "react";
+import type { ReactNode, CSSProperties, PointerEvent } from "react";
 import { RotateCcw, ChevronDown, ChevronUp, Info, Star, Check, X, Loader2, AlertCircle, Users, BarChart3, Medal, Ticket, ArrowDown, ArrowUp, ArrowLeftRight, CalendarClock, Sparkles, Trophy, Route } from "lucide-react";
 
 const CONFED: Record<string, { label: string; color: string }> = {
@@ -2934,8 +2934,83 @@ function DigestHonorarium(){
   );
 }
 
+function LooseBall({seed,onClose}:{seed:number;onClose:()=>void}) {
+  const ballRef=useRef<HTMLButtonElement|null>(null);
+  const stateRef=useRef({x:0,y:0,vx:0,vy:0,rot:0,size:52,last:0});
+  const [reduced,setReduced]=useState(false);
+
+  useEffect(()=>{
+    const mq=window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update=()=>setReduced(mq.matches);
+    update();
+    mq.addEventListener?.("change",update);
+    return ()=>mq.removeEventListener?.("change",update);
+  },[]);
+
+  useEffect(()=>{
+    if(reduced) return;
+    let raf=0;
+    const s=stateRef.current;
+    s.size=window.innerWidth<520?42:52;
+    s.x=Math.min(window.innerWidth-s.size-14,Math.max(14,window.innerWidth*.58));
+    s.y=78;
+    s.vx=(Math.random()>.5?1:-1)*(3.2+Math.random()*2.2);
+    s.vy=-2.5-Math.random()*2;
+    s.rot=0;
+    s.last=0;
+
+    const step=(t:number)=>{
+      if(!s.last) s.last=t;
+      const dt=Math.min((t-s.last)/16.67,2.4);
+      s.last=t;
+      s.vy+=0.34*dt;
+      s.x+=s.vx*dt;
+      s.y+=s.vy*dt;
+      s.vx*=0.998;
+      const pad=8;
+      const maxX=window.innerWidth-s.size-pad;
+      const maxY=window.innerHeight-s.size-pad;
+      if(s.x<pad){s.x=pad;s.vx=Math.abs(s.vx)*.86;}
+      if(s.x>maxX){s.x=maxX;s.vx=-Math.abs(s.vx)*.86;}
+      if(s.y<pad){s.y=pad;s.vy=Math.abs(s.vy)*.72;}
+      if(s.y>maxY){s.y=maxY;s.vy=-Math.abs(s.vy)*.78;s.vx*=.94;if(Math.abs(s.vy)<1.1)s.vy=-5.8;}
+      s.rot+=s.vx*2.1*dt;
+      if(ballRef.current) ballRef.current.style.transform=`translate3d(${s.x}px,${s.y}px,0) rotate(${s.rot}deg)`;
+      raf=requestAnimationFrame(step);
+    };
+
+    const closeTimer=window.setTimeout(onClose,45000);
+    const onKey=(e:KeyboardEvent)=>{ if(e.key==="Escape") onClose(); };
+    window.addEventListener("keydown",onKey);
+    raf=requestAnimationFrame(step);
+    return ()=>{ cancelAnimationFrame(raf); clearTimeout(closeTimer); window.removeEventListener("keydown",onKey); };
+  },[seed,reduced,onClose]);
+
+  if(reduced) return null;
+  const kick=(e:PointerEvent<HTMLButtonElement>)=>{
+    e.preventDefault();
+    const rect=e.currentTarget.getBoundingClientRect();
+    const cx=rect.left+rect.width/2;
+    const cy=rect.top+rect.height/2;
+    const dx=cx-e.clientX;
+    const dy=cy-e.clientY;
+    const len=Math.max(1,Math.hypot(dx,dy));
+    const s=stateRef.current;
+    s.vx+=(dx/len)*8;
+    s.vy+=(dy/len)*8-4;
+  };
+
+  return (
+    <button ref={ballRef} className="wc-loose-ball" onPointerDown={kick} onDoubleClick={onClose} title="Kick" aria-label="Loose ball">
+      <BallIcon size={34}/>
+    </button>
+  );
+}
+
 export default function App() {
   const [stage,setStage]=useState("groups");
+  const [looseBallSeed,setLooseBallSeed]=useState<number|null>(null);
+  const titleTapsRef=useRef<number[]>([]);
   // All scores come from the live feed — this is a tracker, not a simulator.
   const [groupResults,setGroupResults]=useState<Record<string,ScoreResult>>({});
   const [koResults,setKoResults]=useState<Record<string,KoResult>>({});
@@ -2973,6 +3048,25 @@ export default function App() {
   const [previewId,setPreviewId]=useState<string|null>(null);
   const [koPreview,setKoPreview]=useState<{a:string;b:string;fixture:KoFixture}|null>(null);
   const detailIds=useMemo(()=>new Set(Object.keys(liveEventIds)),[liveEventIds]);
+
+  const launchLooseBall=()=>setLooseBallSeed(Date.now());
+  const tapTitle=()=>{
+    const now=Date.now();
+    titleTapsRef.current=[...titleTapsRef.current.filter(t=>now-t<1200),now];
+    if(titleTapsRef.current.length>=3){
+      titleTapsRef.current=[];
+      launchLooseBall();
+    }
+  };
+  useEffect(()=>{
+    const onKey=(e:KeyboardEvent)=>{
+      const target=e.target as HTMLElement|null;
+      if(target&&["INPUT","TEXTAREA","SELECT"].includes(target.tagName)) return;
+      if(e.key.toLowerCase()==="b"&&!e.metaKey&&!e.ctrlKey&&!e.altKey) launchLooseBall();
+    };
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[]);
 
   // Live tracker: load real data on mount, then keep polling while a match window
   // is active (cheap — no network in between).
@@ -3076,11 +3170,12 @@ export default function App() {
   return (
     <div className="wc-app" style={teamTheme(themeCode)}>
       <style>{CSS}</style>
+      {looseBallSeed!=null&&<LooseBall seed={looseBallSeed} onClose={()=>setLooseBallSeed(null)}/>}
       <header className="wc-hero">
         <div className="wc-hero-top">
           <div>
             <div className="wc-hero-kicker">UNITED STATES · MEXICO · CANADA</div>
-            <h1 className="wc-hero-title">World Cup 2026</h1>
+            <h1 className="wc-hero-title"><button className="wc-hero-title-btn" onClick={tapTitle} type="button">World Cup 2026</button></h1>
             <div className="wc-hero-sub">Live scores, standings, and stats — updating automatically as matches are played.</div>
           </div>
           <div className="wc-hero-actions">
@@ -3220,6 +3315,9 @@ const CSS = `
 .wc-hero-top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:1rem;}
 .wc-hero-kicker{font-size:.68rem;letter-spacing:.14em;color:var(--gold);font-weight:600;}
 .wc-hero-title{font-family:'Anton',sans-serif;font-size:clamp(1.8rem,4vw,3rem);margin:.15rem 0;line-height:1;text-transform:uppercase;}
+.wc-hero-title-btn{display:block;background:none;border:none;color:var(--chalk);padding:0;text-align:left;letter-spacing:0;font:inherit;text-transform:inherit;line-height:inherit;}
+.wc-hero-title-btn:hover{color:var(--chalk);}
+.wc-hero-title-btn:focus-visible{outline:2px solid var(--gold);outline-offset:4px;border-radius:4px;}
 .wc-hero-sub{color:var(--chalk-dim);font-size:.82rem;}
 .wc-btn-ghost-sm{display:inline-flex;align-items:center;gap:.35rem;background:transparent;color:var(--chalk-dim);border:1px solid var(--pitch-line);border-radius:999px;padding:.4rem .85rem;font-size:.78rem;font-weight:600;}
 .wc-btn-ghost-sm:hover{color:var(--chalk);border-color:var(--chalk-dim);}
@@ -3387,6 +3485,16 @@ const CSS = `
   45%{transform:translate(calc(var(--x)*.5),calc(-1 * var(--h))) rotate(calc(var(--r)*.5));}
   100%{transform:translate(var(--x),22vh) rotate(var(--r));opacity:0;}
 }
+.wc-loose-ball{
+  position:fixed;left:0;top:0;z-index:70;width:52px;height:52px;border-radius:999px;
+  display:flex;align-items:center;justify-content:center;padding:0;border:2px solid rgba(20,22,26,.9);
+  color:#111;background:#f4f1e8;box-shadow:0 12px 30px rgba(0,0,0,.32),inset 0 0 0 3px rgba(255,255,255,.65);
+  cursor:grab;touch-action:none;will-change:transform;
+}
+.wc-loose-ball:active{cursor:grabbing;}
+.wc-loose-ball svg{width:34px;height:34px;display:block;}
+@media(max-width:520px){.wc-loose-ball{width:42px;height:42px;}.wc-loose-ball svg{width:28px;height:28px;}}
+@media(prefers-reduced-motion:reduce){.wc-loose-ball{display:none;}}
 .wc-goal-shout{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;font-family:'Anton',sans-serif;font-size:clamp(2.2rem,9vw,5rem);color:var(--gold);text-shadow:0 3px 24px rgba(0,0,0,.55);letter-spacing:.04em;white-space:nowrap;pointer-events:none;animation:wc-goal-shout 2.5s ease-out forwards;}
 @keyframes wc-goal-shout{
   0%{opacity:0;transform:translate(-50%,-50%) scale(.5) rotate(-4deg);}
