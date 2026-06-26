@@ -328,6 +328,8 @@ function tierForRank(r: number) {
 
 interface Fixture { id:string; group:string; matchday:number; homeCode:string; awayCode:string; kickoff:string; venue:string; city:string; country:string; }
 interface ScoreResult { homeGoals:number; awayGoals:number; pkHome?:number; pkAway?:number; }
+interface KoResult extends ScoreResult { homeCode:string; awayCode:string; }
+interface MatchInfo { id:string; kickoff:string; venue:string; city:string; homeCode:string; awayCode:string; group?:string; matchday?:number; round?:string; }
 interface StandingRow extends Team { played:number;win:number;draw:number;loss:number;gf:number;ga:number;gd:number;pts:number;role?:string;origin?:string; }
 
 // The real 2026 group-stage schedule (matchups, matchday, and home/away) as drawn
@@ -417,10 +419,10 @@ function fixturesForGroup(letter: string): Fixture[] {
 const ALL_GROUP_MATCHES = REAL_GROUP_FIXTURES;
 
 // ── Live scores (real results from ESPN's public, keyless scoreboard API) ──────
-// The group stage runs 2026-06-11 → 2026-06-27; knockout matches start 06-28, so
-// any *completed* match inside this window is a group game we can map to a fixture.
-const ESPN_GROUP_URL =
-  "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=20260611-20260627&limit=200";
+// The tournament runs 2026-06-11 → 2026-07-19. Group events map by team pair;
+// knockout events map by scheduled kickoff because their teams are not known up front.
+const ESPN_SCOREBOARD_URL =
+  "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=20260611-20260719&limit=200";
 
 // Our synthetic fixtures fix an arbitrary home/away orientation that won't match
 // reality, so we look fixtures up by the unordered pair of team codes and flip the
@@ -443,6 +445,7 @@ interface CardEvent { teamCode:string; player:string; red:boolean; }
 interface LiveGame { fixtureId:string; eventId:string; homeCode:string; awayCode:string; homeGoals:number; awayGoals:number; clock:string; status:string; }
 interface LiveData {
   results: Record<string, ScoreResult>;
+  koResults: Record<string, KoResult>;
   goals: GoalEvent[];
   cards: CardEvent[];
   matchesPlayed: number;
@@ -459,15 +462,52 @@ function goalKind(typeText:string, ownGoal:boolean, penalty:boolean):GoalKind {
   return "goal";
 }
 
+function parsePenaltyScore(c:any):number|undefined {
+  const raw = c?.shootoutScore ?? c?.penaltyScore ?? c?.penalties;
+  const n = raw == null ? NaN : Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function eventTime(ev:any):number|null {
+  const raw = ev?.date ?? ev?.competitions?.[0]?.date;
+  const t = raw ? new Date(raw).getTime() : NaN;
+  return Number.isFinite(t) ? t : null;
+}
+
+function findGroupFixtureForEvent(homeCode:string, awayCode:string, ev:any):Fixture|null {
+  const fixture = FIXTURE_BY_PAIR[pairKey(homeCode, awayCode)];
+  if(!fixture) return null;
+  const t = eventTime(ev);
+  if(t==null) return fixture;
+  const delta = Math.abs(new Date(fixture.kickoff).getTime() - t);
+  return delta <= 24 * 60 * 60 * 1000 ? fixture : null;
+}
+
+function findKoFixtureForEvent(ev:any, used:Set<string>):KoFixture|null {
+  const t = eventTime(ev);
+  if(t==null) return null;
+  let best:KoFixture|null=null;
+  let bestDelta=Infinity;
+  for(const f of KO_FIXTURES){
+    if(used.has(f.id)) continue;
+    const d=Math.abs(new Date(f.kickoff).getTime()-t);
+    if(d<bestDelta){ best=f; bestDelta=d; }
+  }
+  // ESPN kickoff times can drift; this still prevents random future fixtures matching.
+  return best&&bestDelta<=8*60*60*1000 ? best : null;
+}
+
 async function fetchLiveData(): Promise<LiveData> {
-  const resp = await fetch(ESPN_GROUP_URL);
+  const resp = await fetch(ESPN_SCOREBOARD_URL);
   if (!resp.ok) throw new Error(`ESPN responded ${resp.status}`);
   const data = await resp.json();
   const results: Record<string, ScoreResult> = {};
+  const koResults: Record<string, KoResult> = {};
   const goals: GoalEvent[] = [];
   const cards: CardEvent[] = [];
   const eventIds: Record<string, string> = {};
   const liveGames: LiveGame[] = [];
+  const usedKoFixtures = new Set<string>();
   let matchesPlayed = 0;
   for (const ev of (data.events ?? []) as any[]) {
     const comp = ev.competitions?.[0];
@@ -477,19 +517,23 @@ async function fetchLiveData(): Promise<LiveData> {
     const away = competitors.find((c: any) => c.homeAway === "away");
     const hc = home?.team?.abbreviation, ac = away?.team?.abbreviation;
     if (!hc || !ac) continue;
-    const fixture = FIXTURE_BY_PAIR[pairKey(hc, ac)];
+    const groupFixture = findGroupFixtureForEvent(hc, ac, ev);
+    const koFixture = groupFixture ? null : findKoFixtureForEvent(ev, usedKoFixtures);
+    const fixture = groupFixture ?? koFixture;
     if (!fixture) continue;
+    if (koFixture) usedKoFixtures.add(koFixture.id);
     const hg = parseInt(home.score, 10), ag = parseInt(away.score, 10);
     // orient ESPN's home/away to the fixture's home/away
     const orient = (h: number, a: number) =>
-      fixture.homeCode === hc ? { homeGoals: h, awayGoals: a } : { homeGoals: a, awayGoals: h };
+      groupFixture && groupFixture.homeCode === hc ? { homeGoals: h, awayGoals: a } : { homeGoals: a, awayGoals: h };
 
     const state = comp.status?.type?.state;
     if (state === "in") {
-      const o = orient(Number.isNaN(hg) ? 0 : hg, Number.isNaN(ag) ? 0 : ag);
+      const o = groupFixture ? orient(Number.isNaN(hg) ? 0 : hg, Number.isNaN(ag) ? 0 : ag)
+        : { homeGoals:Number.isNaN(hg) ? 0 : hg, awayGoals:Number.isNaN(ag) ? 0 : ag };
       liveGames.push({
         fixtureId: fixture.id, eventId: String(ev.id ?? ""),
-        homeCode: fixture.homeCode, awayCode: fixture.awayCode,
+        homeCode: groupFixture ? groupFixture.homeCode : hc, awayCode: groupFixture ? groupFixture.awayCode : ac,
         homeGoals: o.homeGoals, awayGoals: o.awayGoals,
         clock: comp.status?.displayClock ?? "", status: comp.status?.type?.description ?? "Live",
       });
@@ -497,7 +541,11 @@ async function fetchLiveData(): Promise<LiveData> {
     }
     if (!comp.status?.type?.completed) continue;
     if (Number.isNaN(hg) || Number.isNaN(ag)) continue;
-    results[fixture.id] = orient(hg, ag);
+    if(groupFixture) {
+      results[fixture.id] = orient(hg, ag);
+    } else {
+      koResults[fixture.id] = { homeCode:hc, awayCode:ac, homeGoals:hg, awayGoals:ag, pkHome:parsePenaltyScore(home), pkAway:parsePenaltyScore(away) };
+    }
     if (ev.id) eventIds[fixture.id] = String(ev.id);
     matchesPlayed++;
 
@@ -521,14 +569,14 @@ async function fetchLiveData(): Promise<LiveData> {
       }
     }
   }
-  return { results, goals, cards, matchesPlayed, eventIds, liveGames };
+  return { results, koResults, goals, cards, matchesPlayed, eventIds, liveGames };
 }
 
 // Fixtures whose real kickoff window overlaps `now` — used to decide when to poll
 // for live games (so we only hit the network during plausible match windows).
 const LIVE_WINDOW_MS = 150 * 60 * 1000; // ~2.5h covers 90' + stoppage + half-time
 function anyMatchWindowActive(now: number): boolean {
-  return ALL_GROUP_MATCHES.some(f => {
+  return [...ALL_GROUP_MATCHES, ...KO_FIXTURES].some(f => {
     const k = new Date(f.kickoff).getTime();
     return now >= k - 5 * 60000 && now <= k + LIVE_WINDOW_MS;
   });
@@ -718,8 +766,22 @@ const KO_FIXTURES: KoFixture[] = [
   { id:"ko-3P-1", round:"3P", n:1, kickoff:"2026-07-18T21:00Z", venue:"Hard Rock Stadium", city:"Miami Gardens, Florida", homeSlot:"Semifinal 1 Loser", awaySlot:"Semifinal 2 Loser" },
   { id:"ko-F-1", round:"F", n:1, kickoff:"2026-07-19T19:00Z", venue:"MetLife Stadium", city:"East Rutherford, New Jersey", homeSlot:"Semifinal 1 Winner", awaySlot:"Semifinal 2 Winner" },
 ];
+const KO_FIXTURE_BY_ID: Record<string, KoFixture> = Object.fromEntries(KO_FIXTURES.map(f=>[f.id,f]));
 const KO_ROUND_LABEL:Record<string,string>={R32:"Round of 32",R16:"Round of 16",QF:"Quarterfinals",SF:"Semifinals","3P":"Third place",F:"Final"};
 const TEAM_BY_NAME:Record<string,Team>=Object.fromEntries(TEAMS.map(t=>[t.name,t]));
+
+function matchInfoFor(id:string, koResults:Record<string,KoResult>, liveByFixture:Record<string,LiveGame>):MatchInfo|null{
+  const group=FIXTURE_BY_ID[id];
+  if(group) return {...group};
+  const ko=KO_FIXTURE_BY_ID[id];
+  if(!ko) return null;
+  const live=liveByFixture[id];
+  const result=koResults[id];
+  const homeCode=live?.homeCode ?? result?.homeCode;
+  const awayCode=live?.awayCode ?? result?.awayCode;
+  if(!homeCode||!awayCode) return null;
+  return { id:ko.id, kickoff:ko.kickoff, venue:ko.venue, city:ko.city, round:ko.round, homeCode, awayCode };
+}
 
 function shortSlot(s:string):string {
   let m:RegExpMatchArray|null;
@@ -735,20 +797,50 @@ function shortSlot(s:string):string {
 }
 
 interface KoSide { team:Team|StandingRow|null; label:string; }
-function resolveKoSlot(slot:string, standings:Record<string,StandingRow[]>):KoSide {
+function koWinnerCode(r:KoResult|undefined):string|null{
+  if(!r) return null;
+  if(r.homeGoals>r.awayGoals) return r.homeCode;
+  if(r.awayGoals>r.homeGoals) return r.awayCode;
+  if((r.pkHome??0)>(r.pkAway??0)) return r.homeCode;
+  if((r.pkAway??0)>(r.pkHome??0)) return r.awayCode;
+  return null;
+}
+function koLoserCode(r:KoResult|undefined):string|null{
+  const w=koWinnerCode(r);
+  if(!w||!r) return null;
+  return w===r.homeCode?r.awayCode:r.homeCode;
+}
+function koFixtureByRoundNumber(round:string,n:number):KoFixture|undefined{
+  return KO_FIXTURES.find(f=>f.round===round&&f.n===n);
+}
+function teamSide(code:string|null,label:string):KoSide{
+  const team=code?TEAM_BY_CODE[code]:null;
+  return team?{team,label:team.name}:{team:null,label};
+}
+function resolveKoSlot(slot:string, standings:Record<string,StandingRow[]>, koResults:Record<string,KoResult>={}):KoSide {
   let m:RegExpMatchArray|null;
   if((m=slot.match(/^Group (\w+) Winner$/))) return { team:standings[m[1]]?.[0]??null, label:`Winner ${m[1]}` };
   if((m=slot.match(/^Group (\w+) 2nd Place$/))) return { team:standings[m[1]]?.[1]??null, label:`Runner-up ${m[1]}` };
+  if((m=slot.match(/^Round of 32 (\d+) Winner$/))) return teamSide(koWinnerCode(koResults[koFixtureByRoundNumber("R32",Number(m[1]))?.id ?? ""]), shortSlot(slot));
+  if((m=slot.match(/^Round of 16 (\d+) Winner$/))) return teamSide(koWinnerCode(koResults[koFixtureByRoundNumber("R16",Number(m[1]))?.id ?? ""]), shortSlot(slot));
+  if((m=slot.match(/^Quarterfinal (\d+) Winner$/))) return teamSide(koWinnerCode(koResults[koFixtureByRoundNumber("QF",Number(m[1]))?.id ?? ""]), shortSlot(slot));
+  if((m=slot.match(/^Semifinal (\d+) Winner$/))) return teamSide(koWinnerCode(koResults[koFixtureByRoundNumber("SF",Number(m[1]))?.id ?? ""]), shortSlot(slot));
+  if((m=slot.match(/^Semifinal (\d+) Loser$/))) return teamSide(koLoserCode(koResults[koFixtureByRoundNumber("SF",Number(m[1]))?.id ?? ""]), shortSlot(slot));
   const byName=TEAM_BY_NAME[slot];
   if(byName) return { team:byName, label:byName.name };
   return { team:null, label:shortSlot(slot) };
 }
 
 interface ResolvedKo { fixture:KoFixture; home:KoSide; away:KoSide; }
-function resolveKnockout(groupResults:Record<string,ScoreResult>):ResolvedKo[] {
+function resolveKnockout(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>={}):ResolvedKo[] {
   const standings:Record<string,StandingRow[]>={};
   for(const L of GROUP_LETTERS) standings[L]=computeStandings(L,groupResults);
-  return KO_FIXTURES.map(f=>({ fixture:f, home:resolveKoSlot(f.homeSlot,standings), away:resolveKoSlot(f.awaySlot,standings) }));
+  return KO_FIXTURES.map(f=>{
+    const result=koResults[f.id];
+    return result
+      ? { fixture:f, home:teamSide(result.homeCode,shortSlot(f.homeSlot)), away:teamSide(result.awayCode,shortSlot(f.awaySlot)) }
+      : { fixture:f, home:resolveKoSlot(f.homeSlot,standings,koResults), away:resolveKoSlot(f.awaySlot,standings,koResults) };
+  });
 }
 
 // ── "Road to the Final": trace a team's projected knockout path ──
@@ -1592,19 +1684,28 @@ function ThirdPlaceTableView({groupResults,liveByFixture,onSelectTeam}:{groupRes
   );
 }
 
-function KoCard({m,onSelectTeam,onPreviewKo}:{m:ResolvedKo;onSelectTeam:(c:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void}){
+function KoCard({m,result,live,goals,canDetail,onOpenDetail,onSelectTeam,onPreviewKo}:{
+  m:ResolvedKo;result?:KoResult;live?:LiveGame;goals?:GoalEvent[];canDetail?:boolean;onOpenDetail:(id:string)=>void;
+  onSelectTeam:(c:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
+}){
   const f=m.fixture;
   const both=m.home.team&&m.away.team;
   return (
     <MatchCard match={{id:f.id,kickoff:f.kickoff,venue:f.venue,city:f.city}} isKnockout
       teamA={m.home.team} teamB={m.away.team}
+      result={result} live={live} goals={goals}
       homeLabel={m.home.label} awayLabel={m.away.label}
       onSelectTeam={onSelectTeam}
+      canDetail={canDetail}
+      onOpenDetail={onOpenDetail}
       onOpenKoPreview={both?()=>onPreviewKo(m.home.team!.code,m.away.team!.code,f):undefined}/>
   );
 }
 
-function KoBracket({ko,onSelectTeam,onPreviewKo}:{ko:ResolvedKo[];onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void}){
+function KoBracket({ko,koResults,liveByFixture,goalsByFixture,detailIds,onOpenDetail,onSelectTeam,onPreviewKo}:{
+  ko:ResolvedKo[];koResults:Record<string,KoResult>;liveByFixture:Record<string,LiveGame>;goalsByFixture:Record<string,GoalEvent[]>;
+  detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
+}){
   const byRound=(r:string)=>ko.filter(m=>m.fixture.round===r);
   return (
     <div className="wc-bracket-scroll">
@@ -1615,7 +1716,10 @@ function KoBracket({ko,onSelectTeam,onPreviewKo}:{ko:ResolvedKo[];onSelectTeam:(
             <div className="wc-bracket-col-head"><span>{KO_ROUND_LABEL[r]}</span><span className="wc-bracket-col-count">{matches.length}</span></div>
             <div className="wc-bracket-col-body">
               {matches.map(m=>(
-                <div className="wc-bracket-slot" key={m.fixture.id}><KoCard m={m} onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/></div>
+                <div className="wc-bracket-slot" key={m.fixture.id}><KoCard m={m}
+                  result={koResults[m.fixture.id]} live={liveByFixture[m.fixture.id]} goals={goalsByFixture[m.fixture.id]}
+                  canDetail={detailIds.has(m.fixture.id)||!!liveByFixture[m.fixture.id]?.eventId} onOpenDetail={onOpenDetail}
+                  onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/></div>
               ))}
             </div>
           </div>
@@ -1625,7 +1729,10 @@ function KoBracket({ko,onSelectTeam,onPreviewKo}:{ko:ResolvedKo[];onSelectTeam:(
         <div className="wc-bracket-col" key={m.fixture.id}>
           <div className="wc-bracket-col-head"><span>Third place</span></div>
           <div className="wc-bracket-col-body">
-            <div className="wc-bracket-slot"><KoCard m={m} onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/></div>
+            <div className="wc-bracket-slot"><KoCard m={m}
+              result={koResults[m.fixture.id]} live={liveByFixture[m.fixture.id]} goals={goalsByFixture[m.fixture.id]}
+              canDetail={detailIds.has(m.fixture.id)||!!liveByFixture[m.fixture.id]?.eventId} onOpenDetail={onOpenDetail}
+              onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/></div>
           </div>
         </div>
       ))}
@@ -1633,7 +1740,10 @@ function KoBracket({ko,onSelectTeam,onPreviewKo}:{ko:ResolvedKo[];onSelectTeam:(
   );
 }
 
-function KoScheduleView({ko,onSelectTeam,onPreviewKo}:{ko:ResolvedKo[];onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void}){
+function KoScheduleView({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTeam,onPreviewKo}:{
+  ko:ResolvedKo[];koResults:Record<string,KoResult>;liveByFixture:Record<string,LiveGame>;detailIds:Set<string>;onOpenDetail:(id:string)=>void;
+  onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
+}){
   const days=useMemo(()=>{
     const sorted=[...ko].sort((a,b)=>a.fixture.kickoff.localeCompare(b.fixture.kickoff));
     const out:{day:string;key:string;matches:ResolvedKo[]}[]=[];
@@ -1660,20 +1770,35 @@ function KoScheduleView({ko,onSelectTeam,onPreviewKo}:{ko:ResolvedKo[];onSelectT
           <div className="wc-sched-day-head">{day}</div>
           {matches.map(m=>{
             const f=m.fixture;
+            const res=koResults[f.id];
+            const lg=liveByFixture[f.id];
+            const live=lg&&!res;
             const both=m.home.team&&m.away.team;
-            const preview=both?()=>onPreviewKo(m.home.team!.code,m.away.team!.code,f):undefined;
+            const hg=res?res.homeGoals:lg?.homeGoals, ag=res?res.awayGoals:lg?.awayGoals;
+            const tied=res&&res.homeGoals===res.awayGoals;
+            const hw=(hg!=null&&ag!=null&&hg>ag)||(!!tied&&(res?.pkHome??0)>(res?.pkAway??0));
+            const aw=(hg!=null&&ag!=null&&ag>hg)||(!!tied&&(res?.pkAway??0)>(res?.pkHome??0));
+            const detailable=detailIds.has(f.id)||(!!live&&!!lg?.eventId);
+            const preview=both&&!res&&!live?()=>onPreviewKo(m.home.team!.code,m.away.team!.code,f):undefined;
+            const rowAction=detailable?()=>onOpenDetail(f.id):preview;
             return (
-              <div className={`wc-sched-row${preview?" wc-sched-row-link":""}`} key={f.id}
-                onClick={preview} role={preview?"button":undefined} tabIndex={preview?0:undefined}
-                onKeyDown={preview?(e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); preview(); } }:undefined}>
+              <div className={`wc-sched-row${rowAction?" wc-sched-row-link":""}${live?" wc-sched-row-live":""}`} key={f.id}
+                onClick={rowAction} role={rowAction?"button":undefined} tabIndex={rowAction?0:undefined}
+                onKeyDown={rowAction?(e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); rowAction(); } }:undefined}>
                 <div className="wc-sched-main">
-                  {renderSide(m.home,false)}
-                  <span className="wc-sched-mid"><span className="wc-sched-time">{formatKickoff(f.kickoff).time}</span></span>
-                  {renderSide(m.away,true)}
+                  <span className={`${hw?"wc-sched-win":aw?"wc-sched-lose":""}`}>{renderSide(m.home,false)}</span>
+                  <span className="wc-sched-mid">
+                    {res||live
+                      ? <span className={`wc-sched-score${live?" wc-sched-score-live":""}`}>{hg}<span className="wc-sched-dash">–</span>{ag}</span>
+                      : <span className="wc-sched-time">{formatKickoff(f.kickoff).time}</span>}
+                  </span>
+                  <span className={`${aw?"wc-sched-win":hw?"wc-sched-lose":""}`}>{renderSide(m.away,true)}</span>
                 </div>
                 <div className="wc-sched-sub">
+                  {live&&<span className="wc-sched-livetag"><span className="wc-live-dot"/>LIVE {lg!.clock||lg!.status}</span>}
                   <span className="wc-sched-grp">{KO_ROUND_LABEL[f.round]}</span>
                   <span className="wc-sched-venue">{f.venue}, {f.city}</span>
+                  {detailable?<span className="wc-sched-chev">Match details ›</span>:preview?<span className="wc-sched-chev">Match preview ›</span>:null}
                 </div>
               </div>
             );
@@ -1684,9 +1809,13 @@ function KoScheduleView({ko,onSelectTeam,onPreviewKo}:{ko:ResolvedKo[];onSelectT
   );
 }
 
-function KnockoutView({groupResults,onSelectTeam,onPreviewKo}:{groupResults:Record<string,ScoreResult>;onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void}){
+function KnockoutView({groupResults,koResults,goalsByFixture,liveByFixture,detailIds,onOpenDetail,onSelectTeam,onPreviewKo}:{
+  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;goalsByFixture:Record<string,GoalEvent[]>;
+  liveByFixture:Record<string,LiveGame>;detailIds:Set<string>;onOpenDetail:(id:string)=>void;
+  onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
+}){
   const [view,setView]=useState<"bracket"|"schedule">("bracket");
-  const ko=useMemo(()=>resolveKnockout(groupResults),[groupResults]);
+  const ko=useMemo(()=>resolveKnockout(groupResults,koResults),[groupResults,koResults]);
   return (
     <>
       <div className="wc-groups-bar">
@@ -1699,8 +1828,10 @@ function KnockoutView({groupResults,onSelectTeam,onPreviewKo}:{groupResults:Reco
         <Info size={14}/> Real knockout schedule with dates &amp; venues. Round-of-32 matchups are projected from the current group standings; third-place qualifiers and later rounds fill in as results come through.
       </div>
       {view==="bracket"
-        ? <KoBracket ko={ko} onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/>
-        : <KoScheduleView ko={ko} onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/>}
+        ? <KoBracket ko={ko} koResults={koResults} liveByFixture={liveByFixture} goalsByFixture={goalsByFixture}
+            detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/>
+        : <KoScheduleView ko={ko} koResults={koResults} liveByFixture={liveByFixture} detailIds={detailIds}
+            onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam} onPreviewKo={onPreviewKo}/>}
     </>
   );
 }
@@ -2056,7 +2187,7 @@ function TLItem({ev}:{ev:TimelineEvent}){
 }
 
 function MatchDetailModal({eventId,fixture,result,live,onClose,onSelectTeam}:{
-  eventId:string;fixture:Fixture;result?:ScoreResult;live?:LiveGame;onClose:()=>void;onSelectTeam:(c:string)=>void;
+  eventId:string;fixture:MatchInfo;result?:ScoreResult;live?:LiveGame;onClose:()=>void;onSelectTeam:(c:string)=>void;
 }){
   const [data,setData]=useState<MatchDetail|null>(null);
   const [status,setStatus]=useState<"loading"|"ok"|"error">("loading");
@@ -2408,7 +2539,7 @@ function StatsView({goals,cards,matchesPlayed,onSelectTeam}:{
           )}
         </section>
       </div>
-      <p className="wc-stats-note">Stats reflect the {matchesPlayed} completed group match{matchesPlayed===1?"":"es"} loaded from the live feed. Assists aren’t available in the feed, so they’re omitted.</p>
+      <p className="wc-stats-note">Stats reflect the {matchesPlayed} completed tournament match{matchesPlayed===1?"":"es"} loaded from the live feed. Assists aren’t available in the feed, so they’re omitted.</p>
     </div>
   );
 }
@@ -2500,17 +2631,30 @@ const longDate=(iso:string|number)=>new Date(iso).toLocaleDateString(undefined,{
 // Builds the plain-text tournament state the model narrates from. Picks the focus
 // automatically: today's games if there are any (live, done, or upcoming); otherwise
 // the most recent matchday's results plus the next fixtures to come.
-function buildDigestFacts(groupResults:Record<string,ScoreResult>, liveGames:LiveGame[]):string {
+function buildDigestFacts(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>, liveGames:LiveGame[]):string {
   const nm=(c:string)=>TEAM_BY_CODE[c]?.name??c;
   const now=Date.now();
   const today=localDayKey(new Date());
   const liveIds=new Set(liveGames.map(g=>g.fixtureId));
-  const ms=(f:Fixture)=>new Date(f.kickoff).getTime();
-  const byKickoff=[...ALL_GROUP_MATCHES].sort((a,b)=>ms(a)-ms(b));
+  const koById=Object.fromEntries(resolveKnockout(groupResults,koResults).map(m=>[m.fixture.id,m]));
+  const allMatches=[...ALL_GROUP_MATCHES,...KO_FIXTURES];
+  const ms=(f:Fixture|KoFixture)=>new Date(f.kickoff).getTime();
+  const resultFor=(f:Fixture|KoFixture)=>"group" in f ? groupResults[f.id] : koResults[f.id];
+  const labelFor=(f:Fixture|KoFixture)=>"group" in f ? `Group ${f.group}` : KO_ROUND_LABEL[f.round];
+  const namesFor=(f:Fixture|KoFixture)=>{
+    const live=liveGames.find(g=>g.fixtureId===f.id);
+    if(live) return [nm(live.homeCode),nm(live.awayCode)];
+    if("group" in f) return [nm(f.homeCode),nm(f.awayCode)];
+    const r=koResults[f.id];
+    if(r) return [nm(r.homeCode),nm(r.awayCode)];
+    const k=koById[f.id];
+    return [k?.home.team?.name ?? k?.home.label ?? "TBD", k?.away.team?.name ?? k?.away.label ?? "TBD"];
+  };
+  const byKickoff=allMatches.sort((a,b)=>ms(a)-ms(b));
 
   const todayFx=byKickoff.filter(f=>localDayKey(new Date(f.kickoff))===today);
-  const todayDone=todayFx.filter(f=>groupResults[f.id]&&!liveIds.has(f.id));
-  const todayNext=todayFx.filter(f=>!groupResults[f.id]&&!liveIds.has(f.id));
+  const todayDone=todayFx.filter(f=>resultFor(f)&&!liveIds.has(f.id));
+  const todayNext=todayFx.filter(f=>!resultFor(f)&&!liveIds.has(f.id));
   const hasGamesToday=liveGames.length>0||todayFx.length>0;
 
   const lines:string[]=[];
@@ -2519,33 +2663,37 @@ function buildDigestFacts(groupResults:Record<string,ScoreResult>, liveGames:Liv
 
   if(liveGames.length){
     lines.push("LIVE RIGHT NOW:");
-    for(const g of liveGames) lines.push(`- ${nm(g.homeCode)} ${g.homeGoals}-${g.awayGoals} ${nm(g.awayCode)} (${g.clock||g.status}, Group ${FIXTURE_BY_ID[g.fixtureId]?.group})`);
+    for(const g of liveGames) {
+      const group=FIXTURE_BY_ID[g.fixtureId]?.group;
+      const ko=KO_FIXTURES.find(f=>f.id===g.fixtureId);
+      lines.push(`- ${nm(g.homeCode)} ${g.homeGoals}-${g.awayGoals} ${nm(g.awayCode)} (${g.clock||g.status}, ${group?`Group ${group}`:ko?KO_ROUND_LABEL[ko.round]:"match"})`);
+    }
   }
 
   if(hasGamesToday){
     if(todayDone.length){
       lines.push("TODAY'S COMPLETED RESULTS:");
-      for(const f of todayDone){ const r=groupResults[f.id]!; lines.push(`- ${nm(f.homeCode)} ${r.homeGoals}-${r.awayGoals} ${nm(f.awayCode)} (Group ${f.group})`); }
+      for(const f of todayDone){ const r=resultFor(f)!; const [h,a]=namesFor(f); lines.push(`- ${h} ${r.homeGoals}-${r.awayGoals} ${a} (${labelFor(f)})`); }
     }
     if(todayNext.length){
       lines.push("STILL TO COME TODAY:");
-      for(const f of todayNext){ lines.push(`- ${nm(f.homeCode)} vs ${nm(f.awayCode)} at ${formatKickoff(f.kickoff).time} (Group ${f.group}, ${f.venue})`); }
+      for(const f of todayNext){ const [h,a]=namesFor(f); lines.push(`- ${h} vs ${a} at ${formatKickoff(f.kickoff).time} (${labelFor(f)}, ${f.venue})`); }
     }
   }else{
     // No games today — recap the latest matchday and preview the next one.
-    const done=byKickoff.filter(f=>groupResults[f.id]&&!liveIds.has(f.id));
+    const done=byKickoff.filter(f=>resultFor(f)&&!liveIds.has(f.id));
     if(done.length){
       const lastDay=localDayKey(new Date(done[done.length-1].kickoff));
       const lastDayFx=done.filter(f=>localDayKey(new Date(f.kickoff))===lastDay);
       lines.push(`MOST RECENT RESULTS (${longDate(lastDayFx[lastDayFx.length-1].kickoff)}):`);
-      for(const f of lastDayFx){ const r=groupResults[f.id]!; lines.push(`- ${nm(f.homeCode)} ${r.homeGoals}-${r.awayGoals} ${nm(f.awayCode)} (Group ${f.group})`); }
+      for(const f of lastDayFx){ const r=resultFor(f)!; const [h,a]=namesFor(f); lines.push(`- ${h} ${r.homeGoals}-${r.awayGoals} ${a} (${labelFor(f)})`); }
     }
-    const upcoming=byKickoff.filter(f=>!groupResults[f.id]&&!liveIds.has(f.id)&&ms(f)>=now);
+    const upcoming=byKickoff.filter(f=>!resultFor(f)&&!liveIds.has(f.id)&&ms(f)>=now);
     if(upcoming.length){
       const nextDay=localDayKey(new Date(upcoming[0].kickoff));
       const nextDayFx=upcoming.filter(f=>localDayKey(new Date(f.kickoff))===nextDay);
       lines.push(`NEXT UP (${longDate(upcoming[0].kickoff)}):`);
-      for(const f of nextDayFx){ lines.push(`- ${nm(f.homeCode)} vs ${nm(f.awayCode)} at ${formatKickoff(f.kickoff).time} (Group ${f.group}, ${f.venue})`); }
+      for(const f of nextDayFx){ const [h,a]=namesFor(f); lines.push(`- ${h} vs ${a} at ${formatKickoff(f.kickoff).time} (${labelFor(f)}, ${f.venue})`); }
     }
   }
 
@@ -2564,10 +2712,11 @@ function buildDigestFacts(groupResults:Record<string,ScoreResult>, liveGames:Liv
 // the day rolls over — and crucially NOT when only the match clock ticks. This drives
 // both the regeneration trigger and the cache key, so goals and full-time fire a fresh
 // digest while routine polls don't.
-function digestSignature(groupResults:Record<string,ScoreResult>, liveGames:LiveGame[]):string{
+function digestSignature(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>, liveGames:LiveGame[]):string{
   const live=liveGames.map(g=>`L:${g.fixtureId}:${g.homeGoals}-${g.awayGoals}`).sort();
   const done=Object.keys(groupResults).sort().map(id=>`R:${id}:${groupResults[id].homeGoals}-${groupResults[id].awayGoals}`);
-  return [localDayKey(new Date()),...live,...done].join("|");
+  const ko=Object.keys(koResults).sort().map(id=>`K:${id}:${koResults[id].homeCode}-${koResults[id].awayCode}:${koResults[id].homeGoals}-${koResults[id].awayGoals}:${koResults[id].pkHome??""}-${koResults[id].pkAway??""}`);
+  return [localDayKey(new Date()),...live,...done,...ko].join("|");
 }
 function digestCacheKey(sig:string):string{
   let h=5381; for(let i=0;i<sig.length;i++) h=((h<<5)+h+sig.charCodeAt(i))|0;
@@ -2577,27 +2726,35 @@ function digestCacheKey(sig:string):string{
 // Non-AI fallback: a plain-language summary built entirely client-side from the same
 // data, so the digest panel always shows something even if the AI backend is down,
 // rate-limited, or unconfigured. Reads mechanically, but never blank.
-function fallbackDigest(groupResults:Record<string,ScoreResult>, liveGames:LiveGame[]):string{
+function fallbackDigest(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>, liveGames:LiveGame[]):string{
   const nm=(c:string)=>TEAM_BY_CODE[c]?.name??c;
   const now=Date.now();
   const today=localDayKey(new Date());
   const liveIds=new Set(liveGames.map(g=>g.fixtureId));
-  const ms=(f:Fixture)=>new Date(f.kickoff).getTime();
-  const byKickoff=[...ALL_GROUP_MATCHES].sort((a,b)=>ms(a)-ms(b));
-  const res=(f:Fixture)=>{const r=groupResults[f.id]!;return `${nm(f.homeCode)} ${r.homeGoals}–${r.awayGoals} ${nm(f.awayCode)}`;};
-  const fix=(f:Fixture)=>`${nm(f.homeCode)} v ${nm(f.awayCode)} (${formatKickoff(f.kickoff).time})`;
+  const koById=Object.fromEntries(resolveKnockout(groupResults,koResults).map(m=>[m.fixture.id,m]));
+  const allMatches=[...ALL_GROUP_MATCHES,...KO_FIXTURES];
+  const ms=(f:Fixture|KoFixture)=>new Date(f.kickoff).getTime();
+  const resultFor=(f:Fixture|KoFixture)=>"group" in f ? groupResults[f.id] : koResults[f.id];
+  const namesFor=(f:Fixture|KoFixture)=>{
+    if("group" in f) return [nm(f.homeCode),nm(f.awayCode)];
+    const r=koResults[f.id]; if(r) return [nm(r.homeCode),nm(r.awayCode)];
+    const k=koById[f.id]; return [k?.home.team?.name ?? k?.home.label ?? "TBD", k?.away.team?.name ?? k?.away.label ?? "TBD"];
+  };
+  const byKickoff=allMatches.sort((a,b)=>ms(a)-ms(b));
+  const res=(f:Fixture|KoFixture)=>{const r=resultFor(f)!; const [h,a]=namesFor(f); return `${h} ${r.homeGoals}–${r.awayGoals} ${a}`;};
+  const fix=(f:Fixture|KoFixture)=>{const [h,a]=namesFor(f); return `${h} v ${a} (${formatKickoff(f.kickoff).time})`;};
   const out:string[]=[];
   if(liveGames.length) out.push(`Live now: ${liveGames.map(g=>`${nm(g.homeCode)} ${g.homeGoals}–${g.awayGoals} ${nm(g.awayCode)} (${g.clock||g.status})`).join("; ")}.`);
   const todayFx=byKickoff.filter(f=>localDayKey(new Date(f.kickoff))===today);
   if(liveGames.length||todayFx.length){
-    const done=todayFx.filter(f=>groupResults[f.id]&&!liveIds.has(f.id));
-    const next=todayFx.filter(f=>!groupResults[f.id]&&!liveIds.has(f.id));
+    const done=todayFx.filter(f=>resultFor(f)&&!liveIds.has(f.id));
+    const next=todayFx.filter(f=>!resultFor(f)&&!liveIds.has(f.id));
     if(done.length) out.push(`Today's results: ${done.map(res).join("; ")}.`);
     if(next.length) out.push(`Still to come today: ${next.map(fix).join("; ")}.`);
   }else{
-    const done=byKickoff.filter(f=>groupResults[f.id]&&!liveIds.has(f.id));
+    const done=byKickoff.filter(f=>resultFor(f)&&!liveIds.has(f.id));
     if(done.length){ const last=localDayKey(new Date(done[done.length-1].kickoff)); out.push(`Most recent results (${longDate(done[done.length-1].kickoff)}): ${done.filter(f=>localDayKey(new Date(f.kickoff))===last).map(res).join("; ")}.`); }
-    const up=byKickoff.filter(f=>!groupResults[f.id]&&!liveIds.has(f.id)&&ms(f)>=now);
+    const up=byKickoff.filter(f=>!resultFor(f)&&!liveIds.has(f.id)&&ms(f)>=now);
     if(up.length){ const nd=localDayKey(new Date(up[0].kickoff)); out.push(`Next up (${longDate(up[0].kickoff)}): ${up.filter(f=>localDayKey(new Date(f.kickoff))===nd).map(fix).join("; ")}.`); }
   }
   return out.join(" ");
@@ -2658,17 +2815,17 @@ function Typewriter({text,onSelectTeam,onSelectGroup,speed=16}:{
   return <>{text.slice(0,n)}<span className="wc-caret"/></>;
 }
 
-function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelectGroup}:{
-  groupResults:Record<string,ScoreResult>;liveGames:LiveGame[];matchesPlayed:number;
+function DigestPanel({groupResults,koResults,liveGames,matchesPlayed,onSelectTeam,onSelectGroup}:{
+  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;liveGames:LiveGame[];matchesPlayed:number;
   onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
 }){
   const [text,setText]=useState("");
   const [status,setStatus]=useState<"idle"|"loading"|"error">("idle");
   const [err,setErr]=useState("");
-  const facts=useMemo(()=>buildDigestFacts(groupResults,liveGames),[groupResults,liveGames]);
-  const fallback=useMemo(()=>fallbackDigest(groupResults,liveGames),[groupResults,liveGames]);
+  const facts=useMemo(()=>buildDigestFacts(groupResults,koResults,liveGames),[groupResults,koResults,liveGames]);
+  const fallback=useMemo(()=>fallbackDigest(groupResults,koResults,liveGames),[groupResults,koResults,liveGames]);
   // Regenerate on goals / full-time / new kickoffs, not on every clock tick.
-  const sig=useMemo(()=>digestSignature(groupResults,liveGames),[groupResults,liveGames]);
+  const sig=useMemo(()=>digestSignature(groupResults,koResults,liveGames),[groupResults,koResults,liveGames]);
   const pendingRef=useRef(false); // guard against overlapping requests
   const [gen,setGen]=useState(0); // bumps on every fresh server response → replays the typewriter
   const [note,setNote]=useState(""); // why a manual refresh didn't change (cache/rate-limit)
@@ -2781,6 +2938,7 @@ export default function App() {
   const [stage,setStage]=useState("groups");
   // All scores come from the live feed — this is a tracker, not a simulator.
   const [groupResults,setGroupResults]=useState<Record<string,ScoreResult>>({});
+  const [koResults,setKoResults]=useState<Record<string,KoResult>>({});
   const [liveStatus,setLiveStatus]=useState<"loading"|"ok"|"error">("loading");
   const [liveGoals,setLiveGoals]=useState<GoalEvent[]>([]);
   const [liveCards,setLiveCards]=useState<CardEvent[]>([]);
@@ -2827,6 +2985,7 @@ export default function App() {
           const live=await fetchLiveData();
           if(alive){
             setGroupResults(live.results);
+            setKoResults(live.koResults);
             setLiveGoals(live.goals);
             setLiveCards(live.cards);
             setLiveMatchesPlayed(live.matchesPlayed);
@@ -2905,12 +3064,13 @@ export default function App() {
   },[liveGames]);
 
   const eventIdFor=(fixtureId:string)=>liveEventIds[fixtureId]??liveByFixture[fixtureId]?.eventId??null;
+  const detailMatch=detailId?matchInfoFor(detailId,koResults,liveByFixture):null;
 
   // Group qualifiers (used for best-thirds highlighting and the Teams hub).
   const qualifiers=useMemo(()=>computeQualifiers(groupResults),[groupResults]);
 
   const totalPlayed=liveMatchesPlayed;
-  const totalMatches=ALL_GROUP_MATCHES.length;
+  const totalMatches=ALL_GROUP_MATCHES.length+KO_FIXTURES.length;
   const groupsDone=GROUP_LETTERS.filter(l=>groupIsComplete(l,groupResults)).length;
 
   return (
@@ -2938,7 +3098,7 @@ export default function App() {
         </div>
       </header>
 
-      {DIGEST_ENABLED&&<DigestPanel groupResults={groupResults} liveGames={liveGames} matchesPlayed={liveMatchesPlayed} onSelectTeam={goToTeam} onSelectGroup={goToGroup}/>}
+      {DIGEST_ENABLED&&<DigestPanel groupResults={groupResults} koResults={koResults} liveGames={liveGames} matchesPlayed={liveMatchesPlayed} onSelectTeam={goToTeam} onSelectGroup={goToGroup}/>}
 
       <LiveBanner games={liveGames} onOpen={setDetailId}/>
 
@@ -2985,7 +3145,9 @@ export default function App() {
             onTheme={setThemeCode} focusTeam={focusTeam}/>
         )}
         {stage==="knockout"&&(
-          <KnockoutView groupResults={groupResults} onSelectTeam={goToTeam} onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})}/>
+          <KnockoutView groupResults={groupResults} koResults={koResults}
+            goalsByFixture={goalsByFixture} liveByFixture={liveByFixture} detailIds={detailIds} onOpenDetail={setDetailId}
+            onSelectTeam={goToTeam} onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})}/>
         )}
         {stage==="path"&&(
           <PathView groupResults={groupResults} liveByFixture={liveByFixture} onSelectTeam={goToTeam}
@@ -2993,9 +3155,9 @@ export default function App() {
         )}
       </main>
 
-      {detailId&&eventIdFor(detailId)&&FIXTURE_BY_ID[detailId]&&(
-        <MatchDetailModal eventId={eventIdFor(detailId)!} fixture={FIXTURE_BY_ID[detailId]}
-          result={groupResults[detailId]} live={liveByFixture[detailId]}
+      {detailId&&eventIdFor(detailId)&&detailMatch&&(
+        <MatchDetailModal eventId={eventIdFor(detailId)!} fixture={detailMatch}
+          result={groupResults[detailId]??koResults[detailId]} live={liveByFixture[detailId]}
           onClose={()=>setDetailId(null)}
           onSelectTeam={(c)=>{ setDetailId(null); goToTeam(c); }}/>
       )}

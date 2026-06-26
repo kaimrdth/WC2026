@@ -102,10 +102,11 @@ last ESPN-confirmed lineups and the cached daily digest.
   directly in the browser.
 - The poll loop runs on launch, then **every 30s while a match window is active** (a
   fixture's kickoff ±~2.5h) — so there's no network chatter when nothing is on.
-- Group fixtures (matchups, matchdays, dates, venues) are **baked into `src/App.tsx`** —
-  the real 2026 schedule.
+- Group and knockout fixtures (matchups/slots, dates, venues) are **baked into
+  `src/App.tsx`** — the real 2026 schedule.
 - Knockout is a **projection** from current standings until real KO games begin
-  (June 28, 2026); it then shows real results as they come in.
+  (June 28, 2026); ESPN results then resolve the real teams, scores, penalty winners,
+  match details, stats, and digest context as they come in.
 
 ```mermaid
 sequenceDiagram
@@ -114,7 +115,7 @@ sequenceDiagram
     loop every 30s while a match window is active
         App->>ESPN: GET /scoreboard
         ESPN-->>App: events (scores, state, goals, cards)
-        App->>App: map events → fixtures, recompute standings + qualifiers
+        App->>App: map events → group/KO fixtures, recompute standings + bracket
     end
     Note over App: live games fold into the third-place table<br/>and Pick-a-Team standings "as it stands"
 ```
