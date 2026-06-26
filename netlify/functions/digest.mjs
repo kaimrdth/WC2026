@@ -102,24 +102,29 @@ async function callModel(model, key, body) {
   return last;
 }
 
-function bodyFor(model, facts) {
+function bodyFor(model, facts, fresh = false) {
   // Generous output budget so the digest is never truncated. On 2.5 "thinking" models,
   // internal reasoning tokens are billed against maxOutputTokens — so we disable
   // thinking (thinkingBudget: 0) to hand the whole budget to the text.
-  const generationConfig = { temperature: 0.7, maxOutputTokens: 2048 };
+  // On a manual refresh (`fresh`), nudge for a different angle + higher temperature so the
+  // re-roll is noticeably different from the previous take (the facts are identical).
+  const generationConfig = { temperature: fresh ? 0.95 : 0.7, maxOutputTokens: 2048 };
   if (model.startsWith("gemini-2.5")) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  const text = fresh
+    ? `Tournament state:\n\n${facts}\n\nThis is a manual refresh — write a noticeably different take: open differently and vary the phrasing and which storyline you lead with, while keeping every fact accurate. (variation ${Math.random().toString(36).slice(2, 8)})`
+    : `Tournament state:\n\n${facts}`;
   return {
     systemInstruction: { parts: [{ text: SYSTEM }] },
-    contents: [{ parts: [{ text: `Tournament state:\n\n${facts}` }] }],
+    contents: [{ parts: [{ text }] }],
     generationConfig,
   };
 }
 
 // Try each model in turn. Returns { ok, text } or { ok:false, status, detail, retryAfter }.
-async function generate(facts, key) {
+async function generate(facts, key, fresh = false) {
   let lastErr = null;
   for (const model of MODELS) {
-    const res = await callModel(model, key, bodyFor(model, facts));
+    const res = await callModel(model, key, bodyFor(model, facts, fresh));
     if (res?.ok) {
       const text = res.data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("").trim() ?? "";
       if (text) return { ok: true, text, model };
@@ -149,7 +154,7 @@ export default async (req) => {
   // then overwrites the caches. Normal requests check L1/L2 and coalesce first.
   let r;
   if (force) {
-    r = await generate(facts, key);
+    r = await generate(facts, key, true); // fresh re-roll
   } else {
     // L1 — in-process memory (instant, free, no Gemini call).
     const m = mem.get(h);

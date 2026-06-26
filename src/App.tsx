@@ -2525,6 +2525,7 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
   const sig=useMemo(()=>digestSignature(groupResults,liveGames),[groupResults,liveGames]);
   const pendingRef=useRef(false); // guard against overlapping requests
   const [gen,setGen]=useState(0); // bumps on every fresh server response → replays the typewriter
+  const [note,setNote]=useState(""); // why a manual refresh didn't change (cache/rate-limit)
 
   const showDigest=(t:string)=>{
     setText(t); setStatus("idle"); setGen(g=>g+1);
@@ -2559,6 +2560,8 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
       const t=(d.text||"").trim();
       if(!t) throw new Error("empty response from model");
       showDigest(t);
+      // On a manual refresh, explain why the text may be unchanged.
+      setNote(force?(d.cached?"served from cache — redeploy the function to force fresh":d.stale?"rate-limited — showing the latest available":""):"");
       if(!d.stale){ try{ localStorage.setItem(key,JSON.stringify({text:t})); }catch{ /* ignore */ } } // don't cache stale under this state's key
     }catch{
       // Network/parse failure → same best-effort fallback.
@@ -2580,7 +2583,7 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
   return (
     <div className="wc-digest">
       <div className="wc-digest-head">
-        <span className="wc-digest-tag"><Sparkles size={13}/> Daily digest</span>
+        <span className="wc-digest-tag"><Sparkles size={13}/> Daily digest{note&&<span className="wc-digest-note"> · {note}</span>}</span>
         <button className="wc-digest-refresh" onClick={()=>generate(true)} disabled={status==="loading"} title="Regenerate">
           {status==="loading"?<Loader2 size={13} className="wc-spin"/>:<RotateCcw size={13}/>}
         </button>
@@ -3016,6 +3019,7 @@ const CSS = `
 /* AI daily digest */
 .wc-digest{max-width:1200px;margin:0 auto 1rem;background:linear-gradient(120deg,rgba(215,163,61,.1),rgba(215,163,61,.02));border:1px solid rgba(215,163,61,.3);border-radius:14px;padding:.9rem 1.1rem;}
 .wc-digest-honor{background:linear-gradient(120deg,rgba(215,163,61,.18),rgba(215,163,61,.04));border-color:rgba(215,163,61,.5);}
+.wc-digest-note{font-size:.6rem;font-weight:600;letter-spacing:.02em;color:var(--chalk-dim);text-transform:none;}
 .wc-honor-stats{display:flex;flex-wrap:wrap;gap:1.4rem;margin-top:.7rem;}
 .wc-honor-stat{display:flex;flex-direction:column;line-height:1;}
 .wc-honor-num{font-family:'Anton',sans-serif;font-size:1.5rem;color:var(--gold);}
