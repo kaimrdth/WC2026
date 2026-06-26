@@ -3137,13 +3137,16 @@ export default function App() {
   const [looseBallSeed,setLooseBallSeed]=useState<number|null>(null);
   const titleTapsRef=useRef<number[]>([]);
   // All scores come from the live feed — this is a tracker, not a simulator.
-  const [groupResults,setGroupResults]=useState<Record<string,ScoreResult>>({});
-  const [koResults,setKoResults]=useState<Record<string,KoResult>>({});
+  // Completed results + their ESPN event ids accumulate (and persist) so a played match
+  // stays openable for match details even after it drops out of ESPN's scoreboard window.
+  const loadStore=<T,>(k:string):T=>{ try{ return JSON.parse(localStorage.getItem(k)||"{}"); }catch{ return {} as T; } };
+  const [groupResults,setGroupResults]=useState<Record<string,ScoreResult>>(()=>loadStore("wc26_results"));
+  const [koResults,setKoResults]=useState<Record<string,KoResult>>(()=>loadStore("wc26_koresults"));
   const [liveStatus,setLiveStatus]=useState<"loading"|"ok"|"error">("loading");
   const [liveGoals,setLiveGoals]=useState<GoalEvent[]>([]);
   const [liveCards,setLiveCards]=useState<CardEvent[]>([]);
   const [liveMatchesPlayed,setLiveMatchesPlayed]=useState(0);
-  const [liveEventIds,setLiveEventIds]=useState<Record<string,string>>({});
+  const [liveEventIds,setLiveEventIds]=useState<Record<string,string>>(()=>loadStore("wc26_eventids"));
   const [liveGames,setLiveGames]=useState<LiveGame[]>([]);
   const [updatedAt,setUpdatedAt]=useState<number|null>(null);
 
@@ -3203,12 +3206,15 @@ export default function App() {
         try{
           const live=await fetchLiveData();
           if(alive){
-            setGroupResults(live.results);
-            setKoResults(live.koResults);
+            const save=(k:string,v:unknown)=>{ try{ localStorage.setItem(k,JSON.stringify(v)); }catch{ /* quota */ } };
+            // Merge (don't replace) so completed games + their event ids never get lost
+            // when ESPN's response window no longer includes older fixtures.
+            setGroupResults(prev=>{ const next={...prev,...live.results}; save("wc26_results",next); return next; });
+            setKoResults(prev=>{ const next={...prev,...live.koResults}; save("wc26_koresults",next); return next; });
+            setLiveEventIds(prev=>{ const next={...prev,...live.eventIds}; save("wc26_eventids",next); return next; });
             setLiveGoals(live.goals);
             setLiveCards(live.cards);
             setLiveMatchesPlayed(live.matchesPlayed);
-            setLiveEventIds(live.eventIds);
             setLiveGames(live.liveGames);
             setUpdatedAt(Date.now());
             setLiveStatus("ok");
