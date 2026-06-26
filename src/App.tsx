@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import type { ReactNode, CSSProperties, PointerEvent } from "react";
 import { RotateCcw, ChevronDown, ChevronUp, Info, Star, Check, X, Loader2, AlertCircle, Users, BarChart3, Medal, Ticket, ArrowDown, ArrowUp, ArrowLeftRight, CalendarClock, Sparkles, Trophy, Route } from "lucide-react";
 
@@ -1171,13 +1171,15 @@ function GroupMiniTable({team,standings,qualifiers,onSelectTeam,onSelectGroup}:{
   );
 }
 
-function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confirmed,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onTheme}:{
+interface OpenTeamVisibility { code:string; ratio:number; center:number; }
+
+function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confirmed,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onOpenVisibility}:{
   team:Team;focusKey:number|null;
   groupResults:Record<string,ScoreResult>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   confirmed?:ConfirmedXI;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
-  onTheme:(code:string|null)=>void;
+  onOpenVisibility:(v:OpenTeamVisibility|null)=>void;
 }) {
   const profile=TEAM_PROFILES[team.code];
   const tier=tierForRank(team.fifaRank);
@@ -1186,10 +1188,32 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
   const captain=captainOf(team.code);
   const [open,setOpen]=useState(false);
   const ref=useRef<HTMLDivElement|null>(null);
-  const toggle=()=>setOpen(o=>{ const next=!o; onTheme(next?team.code:null); return next; }); // theme the app to this team
+  const toggle=()=>setOpen(o=>!o);
   useEffect(()=>{
-    if(focusKey!=null){ setOpen(true); onTheme(team.code); ref.current?.scrollIntoView({behavior:"smooth",block:"start"}); }
+    if(focusKey!=null){ setOpen(true); ref.current?.scrollIntoView({behavior:"smooth",block:"start"}); }
   },[focusKey]); // eslint-disable-line
+  useEffect(()=>{
+    const el=ref.current;
+    if(!open||!el){ onOpenVisibility(null); return; }
+    const report=()=>{
+      const r=el.getBoundingClientRect();
+      const visible=Math.max(0,Math.min(window.innerHeight,r.bottom)-Math.max(0,r.top));
+      const ratio=r.height>0?visible/r.height:0;
+      const center=Math.abs((r.top+r.bottom)/2-window.innerHeight/2);
+      onOpenVisibility({code:team.code,ratio,center});
+    };
+    report();
+    const observer=new IntersectionObserver(report,{threshold:[0,.1,.25,.5,.75,1]});
+    observer.observe(el);
+    window.addEventListener("scroll",report,{passive:true});
+    window.addEventListener("resize",report);
+    return ()=>{
+      observer.disconnect();
+      window.removeEventListener("scroll",report);
+      window.removeEventListener("resize",report);
+      onOpenVisibility(null);
+    };
+  },[open,team.code,onOpenVisibility]);
   if(!profile)return null;
   // Prefer ESPN's published XI when we have one; otherwise fall back to the predicted squad.
   const formation=confirmed?.formation || profile.formation;
@@ -2057,9 +2081,22 @@ function TeamsView({groupResults,liveGoals,qualifiers,confirmedLineups,detailIds
   const [confed,setConfed]=useState("all");
   const [group,setGroup]=useState("all");
   const [sort,setSort]=useState("rank");
+  const visibleOpenRef=useRef<Record<string,OpenTeamVisibility>>({});
+  const [themePick,setThemePick]=useState<string|null>(null);
 
   // jumping to a specific team (from a match card) clears filters so it's visible
   useEffect(()=>{ if(focusTeam){ setSearch(""); setConfed("all"); setGroup("all"); } },[focusTeam?.k]);
+
+  const updateOpenVisibility=useCallback((code:string,v:OpenTeamVisibility|null)=>{
+    if(v&&v.ratio>0) visibleOpenRef.current[code]=v;
+    else delete visibleOpenRef.current[code];
+    const visible=Object.values(visibleOpenRef.current).filter(x=>x.ratio>=0.08);
+    visible.sort((a,b)=>(b.ratio-a.ratio)||(a.center-b.center));
+    setThemePick(visible[0]?.code ?? null);
+  },[]);
+
+  useEffect(()=>{ onTheme(themePick); },[themePick,onTheme]);
+  useEffect(()=>()=>onTheme(null),[onTheme]);
 
   const shown=useMemo(()=>{
     const q=search.trim().toLowerCase();
@@ -2105,7 +2142,8 @@ function TeamsView({groupResults,liveGoals,qualifiers,confirmedLineups,detailIds
             focusKey={focusTeam?.code===team.code?focusTeam.k:null}
             groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
             confirmed={confirmedLineups[team.code]}
-            detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup} onTheme={onTheme}/>
+            detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}
+            onOpenVisibility={(v)=>updateOpenVisibility(team.code,v)}/>
         ))}
     </div>
   );
