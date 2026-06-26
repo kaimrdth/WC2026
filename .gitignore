@@ -4,3 +4,7 @@ dist
 .DS_Store
 .env
 .netlify
+
+# Markdown scratch/planning files (keep README tracked)
+*.md
+!README.md
