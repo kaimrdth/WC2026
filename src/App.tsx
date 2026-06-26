@@ -1913,12 +1913,15 @@ function PathStepRow({step,picked,last,forced,onSelectTeam,onPickOpponent,onPrev
   );
 }
 
-function PathView({groupResults,liveByFixture,onSelectTeam,onPreviewKo,focusTeam}:{
+function PathView({groupResults,liveByFixture,onSelectTeam,onPreviewKo,onTheme,focusTeam}:{
   groupResults:Record<string,ScoreResult>;liveByFixture:Record<string,LiveGame>;
   onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
+  onTheme:(code:string|null)=>void;
   focusTeam:{code:string;k:number}|null;
 }){
   const [picked,setPicked]=useState<string|null>(null);
+  // Shift the app's colour scheme to the picked team (same as the Teams view).
+  useEffect(()=>{ onTheme(picked); },[picked]); // eslint-disable-line
   const [scenario,setScenario]=useState<"W"|"R">("W");
   const [picks,setPicks]=useState<Picks>({}); // hypothetical knockout winners
   // Fold in-progress games into the standings so the path reflects results "as it stands".
@@ -3086,7 +3089,7 @@ export default function App() {
   // The app's color scheme shifts to the active team's colours, reverting to the
   // default green/gold when you leave the Teams view.
   const [themeCode,setThemeCode]=useState<string|null>(null);
-  useEffect(()=>{ if(stage!=="teams") setThemeCode(null); },[stage]);
+  useEffect(()=>{ if(stage!=="teams"&&stage!=="path") setThemeCode(null); },[stage]);
 
   // clicking a team in a match card jumps to its Teams page entry
   const [focusTeam,setFocusTeam]=useState<{code:string;k:number}|null>(null);
@@ -3298,7 +3301,7 @@ export default function App() {
         )}
         {stage==="path"&&(
           <PathView groupResults={groupResults} liveByFixture={liveByFixture} onSelectTeam={goToTeam}
-            onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})} focusTeam={focusTeam}/>
+            onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})} onTheme={setThemeCode} focusTeam={focusTeam}/>
         )}
       </main>
 
