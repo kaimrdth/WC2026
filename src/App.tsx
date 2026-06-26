@@ -181,9 +181,30 @@ function teamTheme(code:string|null):CSSProperties{
 }
 // Scope a pitch (lineup) to one team's kit accent, so a two-team modal shows each side in
 // its own colours instead of the ambient app theme's accent.
+const KIT_COLORS: Record<string,{bg:string;text:string;border?:string}> = {
+  JPN:{bg:"#0B1F4D",text:"#FFFFFF"},
+  CIV:{bg:"#F77F00",text:"#009A44"},
+  POR:{bg:"#C8102E",text:"#FFD700"},
+  NED:{bg:"#FF6A00",text:"#111111"},
+  MAR:{bg:"#C1272D",text:"#006233"},
+  IRN:{bg:"#FFFFFF",text:"#239F40",border:"#239F40"},
+  AUS:{bg:"#FFCD00",text:"#00843D"},
+};
 function pitchAccentStyle(code:string):CSSProperties{
+  const kit=KIT_COLORS[code];
+  if(kit) return {
+    ["--kit-bg" as string]:kit.bg,
+    ["--kit-text" as string]:kit.text,
+    ["--kit-border" as string]:kit.border ?? "#F4F1E8",
+  } as CSSProperties;
   const a=TEAM_COLORS[code]?.accent;
-  return a?({["--gold" as string]:brighten(a)} as CSSProperties):{};
+  const ac=a?brighten(a):undefined;
+  return ac?({
+    ["--gold" as string]:ac,
+    ["--kit-bg" as string]:ac,
+    ["--kit-text" as string]:"#111111",
+    ["--kit-border" as string]:"#F4F1E8",
+  } as CSSProperties):{};
 }
 const groupTeams = (letter: string) => TEAMS.filter(t => t.group === letter);
 
@@ -3609,7 +3630,7 @@ const CSS = `
 .wc-pitch-halfway{position:absolute;top:50%;left:0;right:0;height:1px;background:var(--pitch-line);}
 .wc-pitch-row{position:absolute;left:0;right:0;transform:translateY(-50%);}
 .wc-pitch-player{position:absolute;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;width:3.5rem;}
-.wc-pitch-dot{width:1.75rem;height:1.75rem;border-radius:50%;background:var(--gold);color:var(--pitch-deep);display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:.56rem;font-weight:700;border:2px solid var(--chalk);white-space:nowrap;line-height:1;letter-spacing:-.02em;flex-shrink:0;}
+.wc-pitch-dot{width:1.75rem;height:1.75rem;border-radius:50%;background:var(--kit-bg,var(--gold));color:var(--kit-text,var(--pitch-deep));display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:.56rem;font-weight:700;border:2px solid var(--kit-border,var(--chalk));white-space:nowrap;line-height:1;letter-spacing:-.02em;flex-shrink:0;}
 .wc-pitch-dot-empty{background:var(--pitch-deep);color:var(--chalk-dim);border-color:var(--pitch-line);}
 .wc-pitch-name{font-size:.58rem;color:var(--chalk);text-align:center;margin-top:.18rem;line-height:1.1;}
 .wc-pitch-club{font-size:.5rem;color:var(--chalk-dim);text-align:center;line-height:1.1;}
