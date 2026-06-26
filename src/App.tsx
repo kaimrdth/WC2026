@@ -1250,7 +1250,8 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
           <TeamHub team={team} groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
             detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam}/>
 
-          <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="team"/>
+          <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="team"
+            onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
 
           <GroupMiniTable team={team} standings={groupStandings} qualifiers={qualifiers}
             onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
@@ -2079,8 +2080,8 @@ function TLItem({ev}:{ev:TimelineEvent}){
   );
 }
 
-function MatchDetailModal({eventId,fixture,result,live,onClose,onSelectTeam}:{
-  eventId:string;fixture:MatchInfo;result?:ScoreResult;live?:LiveGame;onClose:()=>void;onSelectTeam:(c:string)=>void;
+function MatchDetailModal({eventId,fixture,result,live,onClose,onSelectTeam,onSelectGroup}:{
+  eventId:string;fixture:MatchInfo;result?:ScoreResult;live?:LiveGame;onClose:()=>void;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
 }){
   const [data,setData]=useState<MatchDetail|null>(null);
   const [status,setStatus]=useState<"loading"|"ok"|"error">("loading");
@@ -2138,7 +2139,8 @@ function MatchDetailModal({eventId,fixture,result,live,onClose,onSelectTeam}:{
         </div>
 
         {status!=="loading"&&(
-          <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="recap"/>
+          <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="recap"
+            onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
         )}
 
         {status==="loading"&&<div className="wc-detail-loading"><Loader2 className="wc-spin" size={22}/> Loading match detail…</div>}
@@ -2188,8 +2190,8 @@ function PreviewPitch({team,profile,confirmed}:{team:Team;profile:TeamProfile;co
   );
 }
 
-function MatchPreviewModal({fixture,groupResults,confirmedLineups,onClose,onSelectTeam}:{
-  fixture:Fixture;groupResults:Record<string,ScoreResult>;confirmedLineups:Record<string,ConfirmedXI>;onClose:()=>void;onSelectTeam:(c:string)=>void;
+function MatchPreviewModal({fixture,groupResults,confirmedLineups,onClose,onSelectTeam,onSelectGroup}:{
+  fixture:Fixture;groupResults:Record<string,ScoreResult>;confirmedLineups:Record<string,ConfirmedXI>;onClose:()=>void;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
 }){
   useEffect(()=>{
     const h=(e:KeyboardEvent)=>{ if(e.key==="Escape") onClose(); };
@@ -2221,7 +2223,8 @@ function MatchPreviewModal({fixture,groupResults,confirmedLineups,onClose,onSele
           </button>
         </div>
 
-        <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="upcoming"/>
+        <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="upcoming"
+          onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
 
         <div className="wc-preview-section">
           <div className="wc-preview-h">Group {fixture.group} standings</div>
@@ -2284,7 +2287,8 @@ function KoPreviewModal({matchup,groupResults,confirmedLineups,onClose,onSelectT
             {b.name}<Flag code={b.code} className="wc-detail-flag"/>
           </button>
         </div>
-        <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="upcoming"/>
+        <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="upcoming"
+          onSelectTeam={onSelectTeam}/>
         <div className="wc-preview-section">
           <div className="wc-preview-h">Projected line-ups</div>
           <div className="wc-detail-pitches">
@@ -2763,7 +2767,10 @@ function fallbackMatchRecap(fixture:MatchInfo, result:ScoreResult|undefined, liv
   return `${home.name} and ${away.name} are listed here with match detail available from ESPN.`;
 }
 
-function MicroDigest({facts,cacheKey,fallback,tone="team"}:{facts:string;cacheKey:string;fallback:string;tone?:MicroDigestTone}) {
+function MicroDigest({facts,cacheKey,fallback,tone="team",onSelectTeam,onSelectGroup}:{
+  facts:string;cacheKey:string;fallback:string;tone?:MicroDigestTone;
+  onSelectTeam?:(code:string)=>void;onSelectGroup?:(letter:string)=>void;
+}) {
   const [text,setText]=useState(fallback);
   const [status,setStatus]=useState<"idle"|"loading"|"ok"|"fallback">("idle");
   useEffect(()=>{
@@ -2789,7 +2796,9 @@ function MicroDigest({facts,cacheKey,fallback,tone="team"}:{facts:string;cacheKe
   return (
     <div className={`wc-micro wc-micro-${tone}`}>
       <span className="wc-micro-tag"><Sparkles size={12}/> Context{status==="loading"&&<Loader2 className="wc-spin" size={12}/>}</span>
-      <p>{text}</p>
+      <p>{onSelectTeam||onSelectGroup
+        ? <MicroDigestLinks text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
+        : text}</p>
     </div>
   );
 }
@@ -2901,6 +2910,17 @@ function DigestLinks({text,onSelectTeam,onSelectGroup,onMatch,hasMatch}:{
     if(s.t==="text") return <span key={i}>{s.v}</span>;
     if(s.t==="match") return <button key={i} className="wc-digest-link wc-digest-matchlink" title="Open match" onClick={()=>onMatch(s.a,s.b)}>{s.v}</button>;
     return <button key={i} className="wc-digest-link" onClick={()=>s.t==="team"?onSelectTeam(s.code):onSelectGroup(s.code)}>{s.v}</button>;
+  })}</>;
+}
+
+function MicroDigestLinks({text,onSelectTeam,onSelectGroup}:{
+  text:string;onSelectTeam?:(c:string)=>void;onSelectGroup?:(l:string)=>void;
+}){
+  const segs=useMemo(()=>tokenizeDigest(text),[text]);
+  return <>{segs.map((s,i)=>{
+    if(s.t==="team"&&onSelectTeam) return <button key={i} className="wc-digest-link" onClick={()=>onSelectTeam(s.code)}>{s.v}</button>;
+    if(s.t==="group"&&onSelectGroup) return <button key={i} className="wc-digest-link" onClick={()=>onSelectGroup(s.code)}>{s.v}</button>;
+    return <span key={i}>{s.v}</span>;
   })}</>;
 }
 
@@ -3385,13 +3405,15 @@ export default function App() {
         <MatchDetailModal eventId={eventIdFor(detailId)!} fixture={detailMatch}
           result={groupResults[detailId]??koResults[detailId]} live={liveByFixture[detailId]}
           onClose={()=>setDetailId(null)}
-          onSelectTeam={(c)=>{ setDetailId(null); goToTeam(c); }}/>
+          onSelectTeam={(c)=>{ setDetailId(null); goToTeam(c); }}
+          onSelectGroup={(l)=>{ setDetailId(null); goToGroup(l); }}/>
       )}
 
       {previewId&&FIXTURE_BY_ID[previewId]&&(
         <MatchPreviewModal fixture={FIXTURE_BY_ID[previewId]} groupResults={groupResults} confirmedLineups={confirmedLineups}
           onClose={()=>setPreviewId(null)}
-          onSelectTeam={(c)=>{ setPreviewId(null); goToTeam(c); }}/>
+          onSelectTeam={(c)=>{ setPreviewId(null); goToTeam(c); }}
+          onSelectGroup={(l)=>{ setPreviewId(null); goToGroup(l); }}/>
       )}
 
       {koPreview&&(
