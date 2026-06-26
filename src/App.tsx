@@ -1821,9 +1821,11 @@ function PlayerBadges({p,stat}:{p:DetailPlayer;stat?:PlayerStat}){
 function DetailPitch({team,stats}:{team:DetailTeam;stats:Record<string,PlayerStat>}){
   const lines=[1,...(team.formation?team.formation.split("-").map(Number):[])];
   const total=lines.reduce((a,b)=>a+b,0);
+  // Band by actual position (ESPN's order isn't reliable), then place each row left→right.
+  const ordered=[...team.starters].sort((a,b)=>posRank(a.pos)-posRank(b.pos));
   let idx=0;
   const rows = total===team.starters.length
-    ? lines.map(size=>{const r=team.starters.slice(idx,idx+size);idx+=size;return r;})
+    ? lines.map(size=>{const r=ordered.slice(idx,idx+size).sort((a,b)=>posSide(a.pos)-posSide(b.pos));idx+=size;return r;})
     : [team.starters];
   const numRows=rows.length;
   const benchOn=team.bench.filter(b=>b.on);
@@ -1836,7 +1838,7 @@ function DetailPitch({team,stats}:{team:DetailTeam;stats:Record<string,PlayerSta
       <div className="wc-pitch">
         <div className="wc-pitch-circle"/><div className="wc-pitch-halfway"/>
         {rows.map((row,ri)=>{
-          const top=numRows>1?90-(ri/(numRows-1))*80:50;
+          const top=numRows>1?82-(ri/(numRows-1))*72:50;
           return <div className="wc-pitch-row" style={{top:`${top}%`}} key={ri}>
             {row.map((p,i)=>(
               <div className="wc-pitch-player" style={{left:`${((i+1)/(row.length+1))*100}%`}} key={i}>
