@@ -189,6 +189,8 @@ const KIT_COLORS: Record<string,{bg:string;text:string;border?:string}> = {
   MAR:{bg:"#C1272D",text:"#006233"},
   IRN:{bg:"#FFFFFF",text:"#239F40",border:"#239F40"},
   AUS:{bg:"#FFCD00",text:"#00843D"},
+  FRA:{bg:"#1D3C91",text:"#FFFFFF"},
+  NOR:{bg:"#BA0C2F",text:"#FFFFFF"},
 };
 function pitchAccentStyle(code:string):CSSProperties{
   const kit=KIT_COLORS[code];
