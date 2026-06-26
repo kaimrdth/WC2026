@@ -1224,6 +1224,9 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
   const confirmedFx=confirmed?FIXTURE_BY_ID[confirmed.fixtureId]:undefined;
   const confirmedLabel=confirmedFx?`Possible XI · last out MD${confirmedFx.matchday} v ${confirmedFx.homeCode===team.code?confirmedFx.awayCode:confirmedFx.homeCode}`:"Possible XI";
   const groupStandings=open?computeStandings(team.group,groupResults):[]; // only when expanded
+  const microFacts=useMemo(()=>buildTeamMicroFacts(team,groupResults,liveGoals,qualifiers,ko,koResults,liveByFixture,confirmed),[team,groupResults,liveGoals,qualifiers,ko,koResults,liveByFixture,confirmed]);
+  const microFallback=useMemo(()=>fallbackTeamMicro(team,groupResults,qualifiers),[team,groupResults,qualifiers]);
+  const microKey=useMemo(()=>`team:${team.code}:${digestCacheKey(microFacts)}`,[team.code,microFacts]);
   return (
     <div className="wc-team-card" ref={ref}>
       <button className="wc-team-card-head" onClick={toggle}>
@@ -1246,6 +1249,8 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
 
           <TeamHub team={team} groupResults={groupResults} liveGoals={liveGoals} qualifiers={qualifiers}
             detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam}/>
+
+          <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="team"/>
 
           <GroupMiniTable team={team} standings={groupStandings} qualifiers={qualifiers}
             onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
@@ -2109,6 +2114,9 @@ function MatchDetailModal({eventId,fixture,result,live,onClose,onSelectTeam}:{
   const showLive=!result&&!!live;
   const hScore=result?result.homeGoals:live?.homeGoals;
   const aScore=result?result.awayGoals:live?.awayGoals;
+  const microFacts=useMemo(()=>buildMatchRecapFacts(fixture,result,live,data),[fixture,result,live,data]);
+  const microFallback=useMemo(()=>fallbackMatchRecap(fixture,result,live),[fixture,result,live]);
+  const microKey=useMemo(()=>`match:${fixture.id}:recap:${digestCacheKey(microFacts)}`,[fixture.id,microFacts]);
   return (
     <div className="wc-modal-overlay" onClick={onClose}>
       <div className="wc-modal" onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true">
@@ -2128,6 +2136,10 @@ function MatchDetailModal({eventId,fixture,result,live,onClose,onSelectTeam}:{
             {away.name}<Flag code={away.code} className="wc-detail-flag"/>
           </button>
         </div>
+
+        {status!=="loading"&&(
+          <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="recap"/>
+        )}
 
         {status==="loading"&&<div className="wc-detail-loading"><Loader2 className="wc-spin" size={22}/> Loading match detail…</div>}
         {status==="error"&&<div className="wc-detail-loading">Couldn’t load match detail.</div>}
@@ -2188,6 +2200,9 @@ function MatchPreviewModal({fixture,groupResults,confirmedLineups,onClose,onSele
   const standings=computeStandings(fixture.group,groupResults);
   const hp=TEAM_PROFILES[home.code], ap=TEAM_PROFILES[away.code];
   const isMatchup=(c:string)=>c===home.code||c===away.code;
+  const microFacts=useMemo(()=>buildGroupPreviewFacts(fixture,groupResults,confirmedLineups),[fixture,groupResults,confirmedLineups]);
+  const microFallback=useMemo(()=>fallbackGroupPreview(fixture,groupResults),[fixture,groupResults]);
+  const microKey=useMemo(()=>`match:${fixture.id}:preview:${digestCacheKey(microFacts)}`,[fixture.id,microFacts]);
   return (
     <div className="wc-modal-overlay" onClick={onClose}>
       <div className="wc-modal" onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true">
@@ -2205,6 +2220,8 @@ function MatchPreviewModal({fixture,groupResults,confirmedLineups,onClose,onSele
             {away.name}<Flag code={away.code} className="wc-detail-flag"/>
           </button>
         </div>
+
+        <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="upcoming"/>
 
         <div className="wc-preview-section">
           <div className="wc-preview-h">Group {fixture.group} standings</div>
@@ -2236,8 +2253,8 @@ function MatchPreviewModal({fixture,groupResults,confirmedLineups,onClose,onSele
 }
 
 // Preview for a projected knockout matchup (e.g. a team's Round-of-32 game on its path).
-function KoPreviewModal({matchup,confirmedLineups,onClose,onSelectTeam}:{
-  matchup:{a:string;b:string;fixture:KoFixture};confirmedLineups:Record<string,ConfirmedXI>;onClose:()=>void;onSelectTeam:(c:string)=>void;
+function KoPreviewModal({matchup,groupResults,confirmedLineups,onClose,onSelectTeam}:{
+  matchup:{a:string;b:string;fixture:KoFixture};groupResults:Record<string,ScoreResult>;confirmedLineups:Record<string,ConfirmedXI>;onClose:()=>void;onSelectTeam:(c:string)=>void;
 }){
   useEffect(()=>{
     const h=(e:KeyboardEvent)=>{ if(e.key==="Escape") onClose(); };
@@ -2247,6 +2264,9 @@ function KoPreviewModal({matchup,confirmedLineups,onClose,onSelectTeam}:{
   const f=matchup.fixture;
   const kickoff=formatKickoff(f.kickoff);
   const ap=TEAM_PROFILES[a.code], bp=TEAM_PROFILES[b.code];
+  const microFacts=useMemo(()=>buildKoPreviewFacts(matchup,groupResults,confirmedLineups),[matchup,groupResults,confirmedLineups]);
+  const microFallback=useMemo(()=>fallbackKoPreview(matchup),[matchup]);
+  const microKey=useMemo(()=>`match:${f.id}:preview:${digestCacheKey(microFacts)}`,[f.id,microFacts]);
   return (
     <div className="wc-modal-overlay" onClick={onClose}>
       <div className="wc-modal" onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true">
@@ -2264,6 +2284,7 @@ function KoPreviewModal({matchup,confirmedLineups,onClose,onSelectTeam}:{
             {b.name}<Flag code={b.code} className="wc-detail-flag"/>
           </button>
         </div>
+        <MicroDigest facts={microFacts} cacheKey={microKey} fallback={microFallback} tone="upcoming"/>
         <div className="wc-preview-section">
           <div className="wc-preview-h">Projected line-ups</div>
           <div className="wc-detail-pitches">
@@ -2506,6 +2527,7 @@ function LiveBanner({games,onOpen}:{
 // ── AI daily digest (Gemini via the Netlify function proxy) ───────────────────
 const DIGEST_ENABLED = true;
 const DIGEST_ENDPOINT = "/.netlify/functions/digest";
+const MICRO_DIGEST_ENDPOINT = "/.netlify/functions/micro-digest";
 const FORCE_COOLDOWN_MS = 15 * 60 * 1000; // each browser can manually refresh at most this often
 const localDayKey = (d:Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 // The digest only generates while the tournament is on. After the day the final is played,
@@ -2609,6 +2631,167 @@ function digestSignature(groupResults:Record<string,ScoreResult>, koResults:Reco
 function digestCacheKey(sig:string):string{
   let h=5381; for(let i=0;i<sig.length;i++) h=((h<<5)+h+sig.charCodeAt(i))|0;
   return `wc-digest:${h>>>0}`;
+}
+
+// ── Team/match micro-digests ─────────────────────────────────────────────────
+// These use compact ESPN/local fact packets rather than grounded search. The model
+// only adds phrasing; deterministic fallbacks keep the UI useful without the function.
+type MicroDigestTone = "team"|"upcoming"|"recap";
+
+function shortRecord(r:StandingRow){ return `${r.win}W-${r.draw}D-${r.loss}L, ${r.pts} pts, GD ${fmtGD(r.gd)}`; }
+function matchLabel(f:Fixture|KoFixture|MatchInfo){
+  if("group" in f && f.group) return `Group ${f.group}${"matchday" in f && f.matchday?` MD${f.matchday}`:""}`;
+  if("round" in f && f.round) return KO_ROUND_LABEL[f.round] ?? f.round;
+  return "Match";
+}
+function confirmedLine(team:Team, confirmedLineups:Record<string,ConfirmedXI>){
+  const c=confirmedLineups[team.code];
+  const p=TEAM_PROFILES[team.code];
+  const formation=c?.formation || p?.formation;
+  if(!formation) return `${team.name}: lineup not available`;
+  return `${team.name}: ${c?"possible ESPN XI":"predicted XI"} in ${formation}`;
+}
+function teamFixtureLine(team:Team, f:Fixture, groupResults:Record<string,ScoreResult>, liveByFixture:Record<string,LiveGame>){
+  const oppCode=f.homeCode===team.code?f.awayCode:f.homeCode;
+  const opp=TEAM_BY_CODE[oppCode];
+  const isHome=f.homeCode===team.code;
+  const r=groupResults[f.id], live=liveByFixture[f.id];
+  if(r){
+    const tg=isHome?r.homeGoals:r.awayGoals, og=isHome?r.awayGoals:r.homeGoals;
+    return `MD${f.matchday}: ${tg>og?"beat":tg<og?"lost to":"drew with"} ${opp.name} ${tg}-${og}`;
+  }
+  if(live){
+    const tg=isHome?live.homeGoals:live.awayGoals, og=isHome?live.awayGoals:live.homeGoals;
+    return `MD${f.matchday}: live vs ${opp.name}, ${tg}-${og} (${live.clock||live.status})`;
+  }
+  const k=formatKickoff(f.kickoff);
+  return `MD${f.matchday}: vs ${opp.name}, ${k.date} ${k.time}`;
+}
+function buildTeamMicroFacts(team:Team, groupResults:Record<string,ScoreResult>, liveGoals:GoalEvent[], qualifiers:ReturnType<typeof computeQualifiers>|null, ko:ResolvedKo[], koResults:Record<string,KoResult>, liveByFixture:Record<string,LiveGame>, confirmed?:ConfirmedXI):string{
+  const standings=computeStandings(team.group,groupResults);
+  const pos=standings.findIndex(t=>t.code===team.code)+1;
+  const row=standings[pos-1];
+  const groupDone=groupIsComplete(team.group,groupResults);
+  let status="group still open";
+  if(groupDone){
+    if(pos<=2) status="advanced automatically";
+    else if(pos===3) status=qualifiers?.bestThirds.some(t=>t.code===team.code)?"advanced as a best third-place team":"eliminated from the group";
+    else status="eliminated from the group";
+  }
+  const fixtures=fixturesForGroup(team.group).filter(f=>f.homeCode===team.code||f.awayCode===team.code);
+  const scorers=new Map<string,number>();
+  for(const g of liveGoals){ if(g.teamCode===team.code&&g.kind!=="owngoal") scorers.set(g.player,(scorers.get(g.player)??0)+1); }
+  const koStep=ko.find(m=>(m.home.team?.code===team.code||m.away.team?.code===team.code)&&!koResults[m.fixture.id]);
+  const lines=[
+    "TYPE: team micro-digest",
+    `Team: ${team.name} (${team.code}), Group ${team.group}, FIFA rank ${team.fifaRank}`,
+    row ? `Standing: ${pos} in Group ${team.group}; ${shortRecord(row)}` : "Standing: no table row yet",
+    `Status: ${status}`,
+    `Group matches: ${fixtures.map(f=>teamFixtureLine(team,f,groupResults,liveByFixture)).join("; ") || "none"}`,
+  ];
+  if(scorers.size) lines.push(`Scorers: ${[...scorers.entries()].map(([n,c])=>`${n}${c>1?` x${c}`:""}`).join(", ")}`);
+  if(confirmed) lines.push(`Latest ESPN XI: ${confirmed.formation}; ${confirmed.xi.slice(0,5).map(p=>p.name).join(", ")}${confirmed.xi.length>5?", ...":""}`);
+  if(koStep) lines.push(`Knockout context: next projected match is ${KO_ROUND_LABEL[koStep.fixture.round]} vs ${koStep.home.team?.code===team.code?koStep.away.team?.name??koStep.away.label:koStep.home.team?.name??koStep.home.label}`);
+  return lines.join("\n");
+}
+function fallbackTeamMicro(team:Team, groupResults:Record<string,ScoreResult>, qualifiers:ReturnType<typeof computeQualifiers>|null):string{
+  const s=computeStandings(team.group,groupResults), pos=s.findIndex(t=>t.code===team.code)+1, row=s[pos-1];
+  if(!row||row.played===0) return `${team.name} have not started their group yet. Their first job is simply to establish position in Group ${team.group}.`;
+  const done=groupIsComplete(team.group,groupResults);
+  const status=done?(pos<=2?"advanced":pos===3&&qualifiers?.bestThirds.some(t=>t.code===team.code)?"advanced as a best third-place team":"eliminated"):"still alive in the group picture";
+  return `${team.name} are ${pos} in Group ${team.group} on ${row.pts} points with a ${shortRecord(row)} record. They are ${status}.`;
+}
+function teamRecentLines(code:string, groupResults:Record<string,ScoreResult>){
+  const team=TEAM_BY_CODE[code];
+  return fixturesForGroup(team.group).filter(f=>f.homeCode===code||f.awayCode===code).map(f=>teamFixtureLine(team,f,groupResults,{}));
+}
+function buildGroupPreviewFacts(fixture:Fixture, groupResults:Record<string,ScoreResult>, confirmedLineups:Record<string,ConfirmedXI>):string{
+  const home=TEAM_BY_CODE[fixture.homeCode], away=TEAM_BY_CODE[fixture.awayCode];
+  const standings=computeStandings(fixture.group,groupResults);
+  const k=formatKickoff(fixture.kickoff);
+  return [
+    "TYPE: upcoming group-match micro-digest",
+    `Match: ${home.name} vs ${away.name}`,
+    `Kickoff: ${k.date} ${k.time}; ${fixture.venue}, ${fixture.city}`,
+    `Context: Group ${fixture.group}, matchday ${fixture.matchday}`,
+    `Table: ${standings.map((t,i)=>`${i+1}) ${t.name} ${t.pts} pts GD ${fmtGD(t.gd)}`).join("; ")}`,
+    `Recent ${home.name}: ${teamRecentLines(home.code,groupResults).join("; ")}`,
+    `Recent ${away.name}: ${teamRecentLines(away.code,groupResults).join("; ")}`,
+    `Lineups/formations: ${confirmedLine(home,confirmedLineups)}; ${confirmedLine(away,confirmedLineups)}`,
+  ].join("\n");
+}
+function fallbackGroupPreview(fixture:Fixture, groupResults:Record<string,ScoreResult>):string{
+  const home=TEAM_BY_CODE[fixture.homeCode], away=TEAM_BY_CODE[fixture.awayCode];
+  const s=computeStandings(fixture.group,groupResults);
+  const hp=s.findIndex(t=>t.code===home.code)+1, ap=s.findIndex(t=>t.code===away.code)+1;
+  return `${home.name} and ${away.name} meet in Group ${fixture.group} with ${home.name} ${hp || "unplaced"} and ${away.name} ${ap || "unplaced"} in the table. The stakes are shaped by the group table: top two go through automatically, and third can still matter.`;
+}
+function buildKoPreviewFacts(matchup:{a:string;b:string;fixture:KoFixture}, groupResults:Record<string,ScoreResult>, confirmedLineups:Record<string,ConfirmedXI>):string{
+  const a=TEAM_BY_CODE[matchup.a], b=TEAM_BY_CODE[matchup.b], f=matchup.fixture, k=formatKickoff(f.kickoff);
+  const rowA=computeStandings(a.group,groupResults).find(t=>t.code===a.code);
+  const rowB=computeStandings(b.group,groupResults).find(t=>t.code===b.code);
+  return [
+    "TYPE: upcoming knockout-match micro-digest",
+    `Match: ${a.name} vs ${b.name}`,
+    `Round: ${KO_ROUND_LABEL[f.round]}; kickoff ${k.date} ${k.time}; ${f.venue}, ${f.city}`,
+    `Group form: ${a.name} ${rowA?shortRecord(rowA):"no group record"}; ${b.name} ${rowB?shortRecord(rowB):"no group record"}`,
+    `Lineups/formations: ${confirmedLine(a,confirmedLineups)}; ${confirmedLine(b,confirmedLineups)}`,
+    "Stakes: knockout match; loser exits unless this is the third-place match",
+  ].join("\n");
+}
+function fallbackKoPreview(matchup:{a:string;b:string;fixture:KoFixture}):string{
+  const a=TEAM_BY_CODE[matchup.a], b=TEAM_BY_CODE[matchup.b], f=matchup.fixture;
+  return `${a.name} and ${b.name} meet in the ${KO_ROUND_LABEL[f.round]}. It is a knockout-stage matchup, so the margin for drift is basically gone.`;
+}
+function buildMatchRecapFacts(fixture:MatchInfo, result:ScoreResult|undefined, live:LiveGame|undefined, data:MatchDetail|null):string{
+  const home=TEAM_BY_CODE[fixture.homeCode], away=TEAM_BY_CODE[fixture.awayCode];
+  const score=result?`${result.homeGoals}-${result.awayGoals}`:live?`${live.homeGoals}-${live.awayGoals}`:"score unavailable";
+  const events=(data?.events??[]).slice(0,10).map(e=>`${e.minute} ${e.type}: ${e.main}${e.detail?` (${e.detail})`:""}`);
+  return [
+    live?"TYPE: live match micro-digest":"TYPE: past match recap micro-digest",
+    `Match: ${home.name} vs ${away.name}`,
+    `Score: ${score}${live?` (${live.clock||live.status})`:" final"}`,
+    `Context: ${matchLabel(fixture)}; ${fixture.venue}, ${fixture.city}`,
+    `Events: ${events.join("; ") || "no major timeline events supplied"}`,
+    data?.home&&data?.away ? `Lineups: ${data.home.name} ${data.home.formation}; ${data.away.name} ${data.away.formation}` : "Lineups: not supplied",
+  ].join("\n");
+}
+function fallbackMatchRecap(fixture:MatchInfo, result:ScoreResult|undefined, live:LiveGame|undefined):string{
+  const home=TEAM_BY_CODE[fixture.homeCode], away=TEAM_BY_CODE[fixture.awayCode];
+  if(live) return `${home.name} and ${away.name} are live at ${live.homeGoals}-${live.awayGoals}. The match detail feed has the latest timeline and lineup context.`;
+  if(result) return `${home.name} ${result.homeGoals}-${result.awayGoals} ${away.name} is in the books. The match events below carry the useful detail from ESPN.`;
+  return `${home.name} and ${away.name} are listed here with match detail available from ESPN.`;
+}
+
+function MicroDigest({facts,cacheKey,fallback,tone="team"}:{facts:string;cacheKey:string;fallback:string;tone?:MicroDigestTone}) {
+  const [text,setText]=useState(fallback);
+  const [status,setStatus]=useState<"idle"|"loading"|"ok"|"fallback">("idle");
+  useEffect(()=>{
+    let alive=true;
+    const localKey=`wc-micro:${cacheKey}`;
+    try{
+      const cached=localStorage.getItem(localKey);
+      if(cached){ setText(cached); setStatus("ok"); return; }
+    }catch{ /* ignore */ }
+    setText(fallback);
+    setStatus("loading");
+    fetch(MICRO_DIGEST_ENDPOINT,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({facts,cacheKey})})
+      .then(async r=>r.ok?await r.json():Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(j=>{
+        const t=String(j?.text||"").trim();
+        if(!alive||!t) return;
+        setText(t); setStatus("ok");
+        try{ localStorage.setItem(localKey,t); }catch{ /* ignore */ }
+      })
+      .catch(()=>{ if(alive){ setText(fallback); setStatus("fallback"); } });
+    return ()=>{ alive=false; };
+  },[facts,cacheKey,fallback]);
+  return (
+    <div className={`wc-micro wc-micro-${tone}`}>
+      <span className="wc-micro-tag"><Sparkles size={12}/> Context{status==="loading"&&<Loader2 className="wc-spin" size={12}/>}</span>
+      <p>{text}</p>
+    </div>
+  );
 }
 
 // Non-AI fallback: a plain-language summary built entirely client-side from the same
@@ -3212,7 +3395,7 @@ export default function App() {
       )}
 
       {koPreview&&(
-        <KoPreviewModal matchup={koPreview} confirmedLineups={confirmedLineups}
+        <KoPreviewModal matchup={koPreview} groupResults={groupResults} confirmedLineups={confirmedLineups}
           onClose={()=>setKoPreview(null)}
           onSelectTeam={(c)=>{ setKoPreview(null); goToTeam(c); }}/>
       )}
@@ -3444,6 +3627,14 @@ const CSS = `
 /* Match links (two teams playing each other) — dashed underline to distinguish from a team link. */
 .wc-digest-matchlink{border-bottom-style:dashed;}
 @keyframes wc-blink{50%{opacity:0;}}
+
+.wc-micro{border:1px solid rgba(215,163,61,.22);background:rgba(215,163,61,.07);border-radius:10px;padding:.65rem .75rem;margin:.75rem 0;color:var(--chalk);}
+.wc-micro-tag{display:inline-flex;align-items:center;gap:.32rem;color:var(--gold);font-size:.58rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:.25rem;}
+.wc-micro-tag .wc-spin{margin-left:.15rem;}
+.wc-micro p{margin:0;font-size:.78rem;line-height:1.55;color:var(--chalk-dim);}
+.wc-micro-team{background:rgba(244,241,232,.045);border-color:var(--pitch-line);}
+.wc-micro-recap{background:rgba(46,160,67,.08);border-color:rgba(46,160,67,.25);}
+.wc-micro-upcoming{background:rgba(215,163,61,.07);border-color:rgba(215,163,61,.22);}
 
 /* projected-bracket note */
 .wc-bracket-note{display:flex;align-items:flex-start;gap:.5rem;max-width:760px;margin:0 0 1rem;font-size:.74rem;line-height:1.5;color:var(--chalk-dim);background:var(--pitch-card);border:1px solid var(--pitch-line);border-left:3px solid var(--gold);border-radius:8px;padding:.6rem .8rem;}
