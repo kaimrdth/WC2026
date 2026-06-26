@@ -138,32 +138,39 @@ export default async (req) => {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return json({ error: "GEMINI_API_KEY not configured" }, 500);
 
-  let facts = "";
-  try { ({ facts } = await req.json()); } catch { /* ignore */ }
+  let facts = "", force = false;
+  try { ({ facts, force = false } = await req.json()); } catch { /* ignore */ }
   if (!facts || typeof facts !== "string") return json({ error: "missing facts" }, 400);
 
   const h = hashFacts(facts);
   const store = blobStore();
 
-  // L1 — in-process memory (instant, free, no Gemini call).
-  const m = mem.get(h);
-  if (m && Date.now() - m.ts < MEM_TTL) return json({ text: m.text, cached: "mem" });
+  // `force` (the manual refresh button) bypasses every cache and calls Gemini directly,
+  // then overwrites the caches. Normal requests check L1/L2 and coalesce first.
+  let r;
+  if (force) {
+    r = await generate(facts, key);
+  } else {
+    // L1 — in-process memory (instant, free, no Gemini call).
+    const m = mem.get(h);
+    if (m && Date.now() - m.ts < MEM_TTL) return json({ text: m.text, cached: "mem" });
 
-  // L2 — shared Blobs cache (another instance/visitor already generated this state).
-  const b = await blobGet(store, `d_${h}`);
-  if (b?.text) {
-    mem.set(h, { text: b.text, ts: Date.now() });
-    return json({ text: b.text, cached: "blob" });
-  }
+    // L2 — shared Blobs cache (another instance/visitor already generated this state).
+    const b = await blobGet(store, `d_${h}`);
+    if (b?.text) {
+      mem.set(h, { text: b.text, ts: Date.now() });
+      return json({ text: b.text, cached: "blob" });
+    }
 
-  // Coalesce: if an identical request is already generating on this instance, await it.
-  let p = inflight.get(h);
-  if (!p) {
-    p = generate(facts, key);
-    inflight.set(h, p);
-    p.finally(() => inflight.delete(h));
+    // Coalesce: if an identical request is already generating on this instance, await it.
+    let p = inflight.get(h);
+    if (!p) {
+      p = generate(facts, key);
+      inflight.set(h, p);
+      p.finally(() => inflight.delete(h));
+    }
+    r = await p;
   }
-  const r = await p;
 
   if (r.ok) {
     const entry = { text: r.text, ts: Date.now() };

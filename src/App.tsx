@@ -2545,7 +2545,7 @@ function DigestPanel({groupResults,liveGames,matchesPlayed,onSelectTeam,onSelect
     pendingRef.current=true;
     setStatus("loading"); setErr("");
     try{
-      const r=await fetch(DIGEST_ENDPOINT,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({facts})});
+      const r=await fetch(DIGEST_ENDPOINT,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({facts,force})});
       if(!r.ok){
         // Any backend failure (rate limit, missing key, outage) → show the best text we
         // have (cached last-good, else the local templated summary). Never go blank.
