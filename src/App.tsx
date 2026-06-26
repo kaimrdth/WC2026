@@ -3195,17 +3195,17 @@ const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Anton&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
 
 /* Register the themeable colors so they animate when a team theme is applied/removed. */
-@property --pitch{syntax:"<color>";inherits:true;initial-value:#0F3D2E;}
-@property --pitch-deep{syntax:"<color>";inherits:true;initial-value:#0A2B21;}
-@property --pitch-card{syntax:"<color>";inherits:true;initial-value:#0e3224;}
-@property --pitch-line{syntax:"<color>";inherits:true;initial-value:rgba(244,241,232,.10);}
+@property --pitch{syntax:"<color>";inherits:true;initial-value:#14161A;}
+@property --pitch-deep{syntax:"<color>";inherits:true;initial-value:#0E1013;}
+@property --pitch-card{syntax:"<color>";inherits:true;initial-value:#1D2026;}
+@property --pitch-line{syntax:"<color>";inherits:true;initial-value:rgba(244,241,232,.12);}
 @property --gold{syntax:"<color>";inherits:true;initial-value:#D7A33D;}
 @property --gold-soft{syntax:"<color>";inherits:true;initial-value:rgba(215,163,61,.15);}
 @property --chalk{syntax:"<color>";inherits:true;initial-value:#F4F1E8;}
-@property --chalk-dim{syntax:"<color>";inherits:true;initial-value:#9AADA4;}
+@property --chalk-dim{syntax:"<color>";inherits:true;initial-value:#A8ADB7;}
 .wc-app{
-  --pitch:#0F3D2E;--pitch-deep:#0A2B21;--pitch-card:#0e3224;--pitch-line:rgba(244,241,232,.10);
-  --chalk:#F4F1E8;--chalk-dim:#9AADA4;--gold:#D7A33D;--gold-soft:rgba(215,163,61,.15);
+  --pitch:#14161A;--pitch-deep:#0E1013;--pitch-card:#1D2026;--pitch-line:rgba(244,241,232,.12);
+  --chalk:#F4F1E8;--chalk-dim:#A8ADB7;--gold:#D7A33D;--gold-soft:rgba(215,163,61,.15);
   --green-win:#22543D;--red-loss:rgba(220,53,69,.10);
   font-family:'Space Grotesk',sans-serif;background:var(--pitch);color:var(--chalk);
   min-height:100vh;padding:1.5rem 1rem 3rem;box-sizing:border-box;
