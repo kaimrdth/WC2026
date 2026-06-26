@@ -3293,7 +3293,7 @@ export default function App() {
   const groupsDone=GROUP_LETTERS.filter(l=>groupIsComplete(l,groupResults)).length;
 
   return (
-    <div className="wc-app" style={teamTheme(themeCode)}>
+    <div className={`wc-app${looseBallSeed!=null?" wc-kick-mode":""}`} style={teamTheme(themeCode)}>
       <style>{CSS}</style>
       {looseBallSeed!=null&&<LooseBall seed={looseBallSeed} onClose={()=>setLooseBallSeed(null)}/>}
       <header className="wc-hero">
@@ -3646,6 +3646,11 @@ const CSS = `
 .wc-loose-ball-emoji{display:block;pointer-events:none;user-select:none;-webkit-user-select:none;}
 @media(max-width:520px){.wc-loose-ball{width:42px;height:42px;font-size:34px;}}
 @media(prefers-reduced-motion:reduce){.wc-loose-ball{display:none;}}
+/* Ball mode: cursor becomes a running shoe (you're kicking the ball around). */
+@media(prefers-reduced-motion:no-preference){
+  .wc-kick-mode,.wc-kick-mode *{cursor:url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32"%3E%3Ctext y="26" font-size="26"%3E👟%3C/text%3E%3C/svg%3E') 16 24,auto !important;}
+  .wc-kick-mode .wc-loose-ball:active{cursor:url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32"%3E%3Ctext y="26" font-size="26"%3E👟%3C/text%3E%3C/svg%3E') 16 24,auto !important;}
+}
 .wc-goal-shout{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;font-family:'Anton',sans-serif;font-size:clamp(2.2rem,9vw,5rem);color:var(--gold);text-shadow:0 3px 24px rgba(0,0,0,.55);letter-spacing:.04em;white-space:nowrap;pointer-events:none;animation:wc-goal-shout 2.5s ease-out forwards;}
 @keyframes wc-goal-shout{
   0%{opacity:0;transform:translate(-50%,-50%) scale(.5) rotate(-4deg);}
