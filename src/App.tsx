@@ -121,11 +121,11 @@ const TEAM_COLORS: Record<string,TeamTheme> = {
   USA:{a:"#0A3161",b:"#B31942",accent:"#7BA4D9"}, PAR:{a:"#0038A8",b:"#D52B1E",accent:"#FF5C5C"}, AUS:{a:"#FFCD00",b:"#00843D",accent:"#00843D",mode:"vivid"}, TUR:{a:"#E30A17",b:"#8A0610",accent:"#FF6B6B"},
   GER:{a:"#1A1A1A",b:"#BB0A1E",accent:"#FFCC00"}, ECU:{a:"#FFD400",b:"#0072CE",accent:"#0072CE",mode:"vivid"}, CIV:{a:"#FF8200",b:"#009A44",accent:"#009A44",mode:"vivid"}, CUW:{a:"#002B7F",b:"#0A1E4D",accent:"#F9E814"},
   NED:{a:"#FF6A00",b:"#1B458F",accent:"#1B458F",mode:"vivid"}, JPN:{a:"#1A2A8C",b:"#101A5E",accent:"#F4F1E8"}, TUN:{a:"#E70013",b:"#8A000B",accent:"#FF5A5A"}, SWE:{a:"#006AA7",b:"#FFCC00",accent:"#FFCC00"},
-  BEL:{a:"#C8102E",b:"#1A1A1A",accent:"#FDDA24"}, IRN:{a:"#239F40",b:"#DA0000",accent:"#3FBF63"}, EGY:{a:"#CE1126",b:"#1A1A1A",accent:"#C8A02E"}, NZL:{a:"#00247D",b:"#FFFFFF",accent:"#CC142B"},
+  BEL:{a:"#C8102E",b:"#1A1A1A",accent:"#FDDA24"}, IRN:{a:"#FFFFFF",b:"#0E8A3C",accent:"#0E8A3C",mode:"light"}, EGY:{a:"#CE1126",b:"#1A1A1A",accent:"#C8A02E"}, NZL:{a:"#00247D",b:"#FFFFFF",accent:"#CC142B"},
   ESP:{a:"#AA151B",b:"#5C0A0E",accent:"#F1BF00"}, URU:{a:"#6CB7EA",b:"#123A6B",accent:"#123A6B",mode:"vivid"}, KSA:{a:"#006C35",b:"#00451F",accent:"#2E9E5B"}, CPV:{a:"#003893",b:"#CF2027",accent:"#5A9BE0"},
   FRA:{a:"#0055A4",b:"#C8102E",accent:"#EF6B5E"}, SEN:{a:"#00853F",b:"#E31B23",accent:"#FDEF42"}, NOR:{a:"#BA0C2F",b:"#00205B",accent:"#7BA4D9"}, IRQ:{a:"#007A3D",b:"#CE1126",accent:"#3FBF63"},
   ARG:{a:"#74ACDF",b:"#FFFFFF",accent:"#2F6BB3",mode:"light"}, AUT:{a:"#ED2939",b:"#8A1019",accent:"#FF6B6B"}, ALG:{a:"#006233",b:"#D21034",accent:"#3FBF63"}, JOR:{a:"#1A1A1A",b:"#007A3D",accent:"#CE1126"},
-  POR:{a:"#C8102E",b:"#006600",accent:"#FFD700"}, COL:{a:"#FCD116",b:"#003893",accent:"#C81E3A",mode:"vivid"}, UZB:{a:"#0099B5",b:"#1EB53A",accent:"#33C7E0"}, COD:{a:"#007FFF",b:"#CE1021",accent:"#F7D518"},
+  POR:{a:"#C8102E",b:"#7A0A1C",accent:"#FFD700"}, COL:{a:"#FCD116",b:"#003893",accent:"#C81E3A",mode:"vivid"}, UZB:{a:"#0099B5",b:"#1EB53A",accent:"#33C7E0"}, COD:{a:"#007FFF",b:"#CE1021",accent:"#F7D518"},
   ENG:{a:"#FFFFFF",b:"#0A2472",accent:"#CE1124",mode:"light"}, CRO:{a:"#171796",b:"#C8102E",accent:"#FF5C6E"}, PAN:{a:"#005293",b:"#D21034",accent:"#5A9BE0"}, GHA:{a:"#006B3F",b:"#CE1126",accent:"#FCD116"},
 };
 const hexToRgb=(h:string)=>{const n=h.replace("#","");const v=n.length===3?n.split("").map(c=>c+c).join(""):n;const i=parseInt(v,16);return {r:(i>>16)&255,g:(i>>8)&255,b:i&255};};
@@ -4017,7 +4017,7 @@ const CSS = `
 /* ── Two-sided knockout bracket (compact code cards + elbow connectors) ── */
 .wc-br2-wrap{overflow-x:auto;padding-bottom:.4rem;scrollbar-width:none;-ms-overflow-style:none;}
 .wc-br2-wrap::-webkit-scrollbar{display:none;}      /* hide the system scrollbar (still scrollable) */
-.wc-br2{display:flex;min-width:max-content;margin:0 auto;align-items:stretch;--g:.7rem;--ln:rgba(244,241,232,.22);}
+.wc-br2{display:flex;width:max-content;max-width:none;margin:0 auto;align-items:stretch;--g:.7rem;--ln:rgba(244,241,232,.22);}
 .wc-br2-col{display:flex;flex-direction:column;flex:0 0 auto;width:108px;}
 .wc-br2-head{height:1.6rem;display:flex;align-items:center;justify-content:center;font-family:'Anton',sans-serif;letter-spacing:.02em;font-size:.62rem;text-transform:uppercase;color:var(--gold);text-align:center;}
 .wc-br2-body{flex:1;display:flex;flex-direction:column;}
