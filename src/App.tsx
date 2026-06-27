@@ -991,19 +991,28 @@ function posRank(pos:string):number{
   if(p==="CD"||p==="D"||p.endsWith("B")||p==="SW") return 10;                       // CB/CD/RB/LB/sweeper
   if(p.includes("DM")) return 20;                                                   // defensive mid
   if(p.includes("AM")) return 40;                                                   // attacking mid
-  if(p==="F"||p.includes("ST")||p.endsWith("F")||p.includes("FW")||p.includes("SS")||p.includes("W")) return 50; // wings & forwards
+  // Central forwards rank above wingers so a lone striker (the "1" in 4-2-3-1) lands
+  // in the top row no matter where ESPN lists it, leaving wide men in the band below.
+  if(p==="F"||p==="CF"||p==="FW"||p.includes("ST")||p.includes("SS")) return 50;    // central forward
+  if(p.endsWith("W")||p.endsWith("F")||p.includes("W")) return 45;                  // winger / wide forward
   if(p.includes("M")) return 30;                                                    // central/wide mid
   return 35;
 }
-// Horizontal placement within a row. Side is a "-R"/"-L" suffix (ESPN) or an L/R prefix
-// (standard): left-sided to the left, right-sided to the right, centrals in the middle.
+// Horizontal placement within a row. Returns a signed magnitude: outer (touchline)
+// roles — full-backs, wing-backs, wingers — sit wider (±2) than inside roles —
+// centre-backs, inside mids (±1) — on the same flank, so a RB lands outside a RCB.
+// Side comes from a "-R"/"-L" suffix (ESPN) or an L/R prefix (standard); 0 = central.
 function posSide(pos:string):number{
-  const p=(pos||"").toUpperCase();
-  if(/[-\s]?R$/.test(p)) return 1;
-  if(/[-\s]?L$/.test(p)) return -1;
-  if(p[0]==="L") return -1;
-  if(p[0]==="R") return 1;
-  return 0;
+  const raw=(pos||"").toUpperCase().trim();
+  let side=0;
+  if(/[-\s]R$/.test(raw)) side=1;
+  else if(/[-\s]L$/.test(raw)) side=-1;
+  else if(raw[0]==="L") side=-1;
+  else if(raw[0]==="R") side=1;
+  if(!side) return 0;
+  const core=raw.replace(/[-\s]?[LR]$/,"");
+  const outer=/WB/.test(core)||/^[LR]B$/.test(raw)||/W$/.test(core)||/^[LR]W$/.test(raw);
+  return side*(outer?2:1);
 }
 
 function PitchDiagram({formation,xi}:{formation:string;xi:Player[]}) {
