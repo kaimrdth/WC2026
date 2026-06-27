@@ -361,7 +361,7 @@ interface Fixture { id:string; group:string; matchday:number; homeCode:string; a
 interface ScoreResult { homeGoals:number; awayGoals:number; pkHome?:number; pkAway?:number; }
 interface KoResult extends ScoreResult { homeCode:string; awayCode:string; }
 interface MatchInfo { id:string; kickoff:string; venue:string; city:string; homeCode:string; awayCode:string; group?:string; matchday?:number; round?:string; }
-interface StandingRow extends Team { played:number;win:number;draw:number;loss:number;gf:number;ga:number;gd:number;pts:number;role?:string;origin?:string; }
+interface StandingRow extends Team { played:number;win:number;draw:number;loss:number;gf:number;ga:number;gd:number;pts:number;role?:string;origin?:string;live?:boolean; }
 
 // The real 2026 group-stage schedule (matchups, matchday, and home/away) as drawn
 // by FIFA. Matchday is the actual calendar round, not a synthetic round-robin order.
@@ -755,17 +755,26 @@ async function fetchEventLineups(eventId:string):Promise<DetailTeam[]>{
   return ((s.rosters ?? []) as any[]).map(parseRoster).filter(r=>r.starters.length>=11);
 }
 
-function computeStandings(letter: string, groupResults: Record<string, ScoreResult>): StandingRow[] {
+// Standings are computed from completed results. Optionally folds in *in-progress*
+// games (`liveByFixture`) so the table shows where it currently stands while matches
+// are being played — those rows are flagged `live` so the UI can mark them. Pass no
+// live map (the default) to get the official, final-results-only table — that's what
+// qualifier/knockout resolution uses, since the bracket must not move mid-match.
+function computeStandings(letter: string, groupResults: Record<string, ScoreResult>, liveByFixture: Record<string, LiveGame> = {}): StandingRow[] {
   const teams = groupTeams(letter);
   const table: Record<string, StandingRow> = {};
   teams.forEach(t=>{table[t.code]={...t,played:0,win:0,draw:0,loss:0,gf:0,ga:0,gd:0,pts:0};});
   fixturesForGroup(letter).forEach(m=>{
-    const res=groupResults[m.id]; if(!res) return;
+    const done=groupResults[m.id];
+    const lg=done?undefined:liveByFixture[m.id];
+    const res:ScoreResult|undefined=done??(lg?{homeGoals:lg.homeGoals,awayGoals:lg.awayGoals}:undefined);
+    if(!res) return;
     const h=table[m.homeCode],a=table[m.awayCode];
     h.played++;a.played++;h.gf+=res.homeGoals;h.ga+=res.awayGoals;a.gf+=res.awayGoals;a.ga+=res.homeGoals;
     if(res.homeGoals>res.awayGoals){h.win++;h.pts+=3;a.loss++;}
     else if(res.homeGoals<res.awayGoals){a.win++;a.pts+=3;h.loss++;}
     else{h.draw++;a.draw++;h.pts+=1;a.pts+=1;}
+    if(lg){h.live=true;a.live=true;}
   });
   const arr=Object.values(table);
   arr.forEach(t=>{t.gd=t.gf-t.ga;});
@@ -1115,10 +1124,11 @@ function GroupMiniTable({team,standings,qualifiers,onSelectTeam,onSelectGroup}:{
   onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
 }){
   const bestThirdCodes=qualifiers?new Set(qualifiers.bestThirds.map(t=>t.code)):null;
+  const anyLive=standings.some(t=>t.live);
   return (
     <div className="wc-team-group">
       <div className="wc-team-group-head">
-        <span className="wc-team-group-title">Group {team.group} table</span>
+        <span className="wc-team-group-title">Group {team.group} table{anyLive&&<span className="wc-standings-livetag"><span className="wc-live-dot"/>LIVE</span>}</span>
         <button className="wc-team-group-link" onClick={()=>onSelectGroup(team.group)}>View group →</button>
       </div>
       <table className="wc-standings">
@@ -1127,8 +1137,8 @@ function GroupMiniTable({team,standings,qualifiers,onSelectTeam,onSelectGroup}:{
           {standings.map((t,i)=>{
             const cls=i<2?"wc-row-q":(i===2&&bestThirdCodes?.has(t.code))?"wc-row-third":"";
             return (
-              <tr key={t.code} className={`${cls}${t.code===team.code?" wc-row-me":""}`}>
-                <td className="wc-pos">{i+1}</td>
+              <tr key={t.code} className={`${cls}${t.code===team.code?" wc-row-me":""}${t.live?" wc-row-live":""}`}>
+                <td className="wc-pos"><span className="wc-pos-inner">{i+1}{t.live&&<span className="wc-live-dot wc-row-live-dot"/>}</span></td>
                 <td><TeamChip team={t} onSelect={onSelectTeam}/></td>
                 <td>{t.played}</td><td>{t.win}</td><td>{t.draw}</td><td>{t.loss}</td>
                 <td>{fmtGD(t.gd)}</td><td className="wc-pts">{t.pts}</td>
@@ -1283,7 +1293,7 @@ function TeamProfileCard({team,focusKey,groupResults,liveGoals,qualifiers,confir
   const xi=confirmed?.xi ?? profile.xi;
   const confirmedFx=confirmed?FIXTURE_BY_ID[confirmed.fixtureId]:undefined;
   const confirmedLabel=confirmedFx?`Possible XI · last out MD${confirmedFx.matchday} v ${confirmedFx.homeCode===team.code?confirmedFx.awayCode:confirmedFx.homeCode}`:"Possible XI";
-  const groupStandings=open?computeStandings(team.group,groupResults):[]; // only when expanded
+  const groupStandings=open?computeStandings(team.group,groupResults,liveByFixture):[]; // only when expanded; folds in live scores
   const microFacts=useMemo(()=>buildTeamMicroFacts(team,groupResults,liveGoals,qualifiers,ko,koResults,liveByFixture,confirmed),[team,groupResults,liveGoals,qualifiers,ko,koResults,liveByFixture,confirmed]);
   const microFallback=useMemo(()=>fallbackTeamMicro(team,groupResults,qualifiers),[team,groupResults,qualifiers]);
   const microKey=useMemo(()=>`team:${team.code}:${digestCacheKey(microFacts)}`,[team.code,microFacts]);
@@ -1484,11 +1494,13 @@ function GroupCard({letter,standings,groupResults,qualifiers,goalsByFixture,onSe
   const played=fixturesForGroup(letter).filter(m=>groupResults[m.id]).length;
   const bestThirdCodes=qualifiers?new Set(qualifiers.bestThirds.map(t=>t.code)):null;
   const fixtures=fixturesForGroup(letter);
+  const anyLive=standings.some(t=>t.live);
 
   return (
     <div className={`wc-group-card${flash?" wc-group-flash":""}`} id={`wc-group-${letter}`}>
       <div className="wc-group-head">
         <span className="wc-group-letter">{letter}</span>
+        {anyLive&&<span className="wc-standings-livetag"><span className="wc-live-dot"/>LIVE</span>}
         <span className={`wc-group-pill${complete?" wc-group-pill-done":""}`}>
           {complete?<><Check size={11}/> Done</>:`${played}/6`}
         </span>
@@ -1499,8 +1511,8 @@ function GroupCard({letter,standings,groupResults,qualifiers,goalsByFixture,onSe
           {standings.map((t,i)=>{
             const cls=i<2?"wc-row-q":(i===2&&bestThirdCodes?.has(t.code))?"wc-row-third":complete?"wc-row-out":"";
             return (
-              <tr key={t.code} className={cls}>
-                <td className="wc-pos">{i+1}</td>
+              <tr key={t.code} className={`${cls}${t.live?" wc-row-live":""}`}>
+                <td className="wc-pos"><span className="wc-pos-inner">{i+1}{t.live&&<span className="wc-live-dot wc-row-live-dot"/>}</span></td>
                 <td><TeamChip team={t} onSelect={onSelectTeam}/></td>
                 <td>{t.played}</td><td>{t.win}</td><td>{t.draw}</td><td>{t.loss}</td>
                 <td>{fmtGD(t.gd)}</td><td className="wc-pts">{t.pts}</td>
@@ -1641,8 +1653,8 @@ function GroupsView({groupResults,qualifiers,goalsByFixture,onSelectTeam,detailI
   // Standings are computed once per results change and shared with every card, instead of
   // each of the 12 GroupCards recomputing on every render (toggles, polls, etc.).
   const standingsByGroup=useMemo(()=>Object.fromEntries(
-    GROUP_LETTERS.map(l=>[l,computeStandings(l,groupResults)])
-  ) as Record<string,StandingRow[]>,[groupResults]);
+    GROUP_LETTERS.map(l=>[l,computeStandings(l,groupResults,liveByFixture)])
+  ) as Record<string,StandingRow[]>,[groupResults,liveByFixture]);
   // matches collapsed by default — a clean grid of 12 tables, far less dense
   const [expanded,setExpanded]=useState<Record<string,boolean>>({});
   const [teamQuery,setTeamQuery]=useState("");
@@ -3678,6 +3690,12 @@ const CSS = `
 .wc-row-third{box-shadow:inset 3px 0 0 #e0a52e;background:rgba(224,165,46,.12);}
 .wc-row-out{box-shadow:inset 3px 0 0 #d73a49;background:rgba(215,58,73,.13);}
 .wc-row-me{outline:1px solid rgba(244,241,232,.35);outline-offset:-1px;font-weight:700;}
+/* Live (in-progress) standings: provisional rows fold in the current score. The
+   qualifier/third colour bars stay; live is shown via the pulsing dot + red Pts. */
+.wc-standings-livetag{display:inline-flex;align-items:center;gap:.28rem;margin-left:.4rem;font-size:.56rem;font-weight:800;letter-spacing:.05em;color:#ff8a8a;vertical-align:middle;}
+.wc-pos-inner{display:inline-flex;align-items:center;justify-content:center;gap:.22rem;}
+.wc-row-live-dot{width:.4rem;height:.4rem;}
+.wc-row-live .wc-pts{color:#ff8a8a;}
 .wc-team-group{margin:.6rem 0 .2rem;}
 .wc-team-group-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem;}
 .wc-team-group-title{font-size:.74rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--chalk-dim);}
