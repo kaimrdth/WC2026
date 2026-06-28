@@ -777,30 +777,45 @@ const cleanPlayerName=(n:string)=>n
   .replace(/\s+/g," ")
   .trim()
   .toLowerCase();
-const lastName=(n:string)=>{
-  const p=cleanPlayerName(n).split(" ").filter(Boolean);
-  return p.length>1?p[p.length-1]:p[0]??"";
-};
 const clubOverrideKey=(code:string,name:string)=>`${code}|${cleanPlayerName(name)}`;
 
 // Convert an ESPN roster into the Player[] shape the pitch diagram expects, sorted
 // by formation place (GK → attack). Club is enriched from the static squad data.
-// Build a player-name → club resolver for a team from its static squad (matches by full
-// name, then surname, with manual overrides). Shared by the confirmed-XI conversion and
-// the match-detail pitch's "Club" label mode.
+// Build a player-name → club resolver for a team from its static squad. ESPN doesn't ship
+// a player's club, so we match its lineup names against our predicted XI: full normalised
+// name first, then surname (incl. compound surnames like "van Dijk"/"Mac Allister"). The
+// surname fallback only fires when it's unambiguous in the squad — so a shared surname
+// (e.g. Argentina's three Martínez) never mis-assigns a club; it stays blank instead.
+// NB: players we didn't predict have no entry at all — there's no club source for them.
+const surnameKeys=(clean:string):string[]=>{
+  const t=clean.split(" ").filter(Boolean);
+  if(t.length<2) return [t[0]??""];
+  return [t.slice(-2).join(" "), t[t.length-1]]; // compound surname first, then last token
+};
 function makeClubLookup(code:string){
   const byFull=new Map<string,string>(), byLast=new Map<string,string>();
+  const ambiguous=new Set<string>(); // surnames shared by 2+ squad players → don't guess
   const prof=TEAM_PROFILES[code];
   if(prof) for(const p of prof.xi){
     if(!p.name||!p.club) continue;
-    const full=cleanPlayerName(p.name), last=lastName(p.name);
-    if(full) byFull.set(full,p.club);
-    if(last&&!byLast.has(last)) byLast.set(last,p.club);
+    const clean=cleanPlayerName(p.name);
+    if(clean) byFull.set(clean,p.club);
+    for(const k of new Set(surnameKeys(clean))){
+      if(!k) continue;
+      const prev=byLast.get(k);
+      if(prev!==undefined&&prev!==p.club) ambiguous.add(k);
+      else byLast.set(k,p.club);
+    }
   }
-  return (name:string):string=>PLAYER_CLUB_OVERRIDES[clubOverrideKey(code,name)]
-    ?? byFull.get(cleanPlayerName(name))
-    ?? byLast.get(lastName(name))
-    ?? "";
+  return (name:string):string=>{
+    const ov=PLAYER_CLUB_OVERRIDES[clubOverrideKey(code,name)]; if(ov) return ov;
+    const clean=cleanPlayerName(name);
+    const full=byFull.get(clean); if(full) return full;
+    for(const k of surnameKeys(clean)){
+      if(k&&!ambiguous.has(k)){ const c=byLast.get(k); if(c) return c; }
+    }
+    return "";
+  };
 }
 function detailTeamToXI(r:DetailTeam):Player[]{
   const club=makeClubLookup(r.code);
