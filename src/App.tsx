@@ -959,8 +959,8 @@ function koOrderFrom(root:KoFixture|undefined):Record<string,string[]>{
   return order;
 }
 // The two halves of the bracket = the two semifinal sub-trees (from the official draw).
-const LEFT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1));
-const RIGHT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===2));
+const LEFT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===2));
+const RIGHT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1));
 const TEAM_BY_NAME:Record<string,Team>=Object.fromEntries(TEAMS.map(t=>[t.name,t]));
 
 function matchInfoFor(id:string, koResults:Record<string,KoResult>, liveByFixture:Record<string,LiveGame>):MatchInfo|null{
