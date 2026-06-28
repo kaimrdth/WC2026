@@ -4183,13 +4183,25 @@ const CSS = `
 /* Trionda ode: a white wordmark with red/green/blue waves drifting across it — a nod to
    the official ball's three host-nation waves. */
 .wc-hero-title-btn{display:block;background:none;border:none;padding:0;text-align:left;letter-spacing:0;font:inherit;text-transform:inherit;line-height:inherit;
-  background-image:linear-gradient(100deg,
-    #fff 0%,#fff 13%, #ff6b6b 21%,#fff 30%,#fff 45%, #2ec06a 53%,#fff 62%,#fff 77%, #4d8bff 85%,#fff 94%,#fff 100%);
-  background-size:200% 100%;
+  /* three host-colour blobs drifting across the wordmark on criss-crossing, eased, irregular
+     paths (different sizes + periods) so the swirl reads organic and never obviously repeats. */
+  background-image:
+    radial-gradient(38% 80% at 50% 50%, rgba(255,90,90,.78), transparent 58%),
+    radial-gradient(42% 86% at 50% 50%, rgba(46,200,110,.72), transparent 58%),
+    radial-gradient(36% 78% at 50% 50%, rgba(77,139,255,.80), transparent 58%),
+    linear-gradient(#fff,#fff);
+  background-repeat:no-repeat;
+  background-size:170% 150%,150% 170%,185% 160%,100% 100%;
   -webkit-background-clip:text;background-clip:text;
   -webkit-text-fill-color:transparent;color:transparent;
-  animation:wc-trionda 9s linear infinite;}
-@keyframes wc-trionda{to{background-position:-200% 0;}}
+  animation:wc-trionda 17s ease-in-out infinite;}
+@keyframes wc-trionda{
+  0%{background-position:6% 18%,82% 88%,98% 42%,0 0;}
+  19%{background-position:58% 76%,24% 26%,40% 98%,0 0;}
+  38%{background-position:96% 34%,92% 66%,8% 16%,0 0;}
+  57%{background-position:32% 98%,52% 6%,74% 84%,0 0;}
+  78%{background-position:74% 48%,10% 62%,28% 28%,0 0;}
+  100%{background-position:6% 18%,82% 88%,98% 42%,0 0;}}
 .wc-hero-title-btn:focus-visible{outline:2px solid var(--chalk);outline-offset:4px;border-radius:4px;}
 @media(prefers-reduced-motion:reduce){.wc-hero-title-btn{animation:none;background:none;-webkit-text-fill-color:#fff;color:#fff;}}
 .wc-hero-sub{color:var(--chalk-dim);font-size:.82rem;}
