@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import type { ReactNode, CSSProperties, PointerEvent } from "react";
 import { RotateCcw, ChevronDown, ChevronUp, Info, Star, Check, X, Loader2, AlertCircle, Users, BarChart3, Medal, Ticket, ArrowDown, ArrowUp, ArrowLeftRight, CalendarClock, Sparkles, Trophy } from "lucide-react";
 
@@ -2880,13 +2880,22 @@ function fallbackMatchRecap(fixture:MatchInfo, result:ScoreResult|undefined, liv
   return `${home.name} and ${away.name} are listed here with match detail available from ESPN.`;
 }
 
+// Global "minimize all AI digests" preference, shared via context so the daily-digest
+// panel and every scattered micro-digest collapse together from a single control.
+const DigestMinContext = createContext<{min:boolean;toggle:()=>void}>({min:false,toggle:()=>{}});
+const useDigestMin = ()=>useContext(DigestMinContext);
+
 function MicroDigest({facts,cacheKey,fallback,tone="team",onSelectTeam,onSelectGroup}:{
   facts:string;cacheKey:string;fallback:string;tone?:MicroDigestTone;
   onSelectTeam?:(code:string)=>void;onSelectGroup?:(letter:string)=>void;
 }) {
+  const {min}=useDigestMin();
+  const [revealed,setRevealed]=useState(false); // per-card override while globally minimized
+  const collapsed = min && !revealed;
   const [text,setText]=useState(fallback);
   const [status,setStatus]=useState<"idle"|"loading"|"ok"|"fallback">("idle");
   useEffect(()=>{
+    if(collapsed) return; // don't fetch context the user has hidden
     let alive=true;
     const localKey=`wc-micro:${cacheKey}`;
     try{
@@ -2905,10 +2914,20 @@ function MicroDigest({facts,cacheKey,fallback,tone="team",onSelectTeam,onSelectG
       })
       .catch(()=>{ if(alive){ setText(fallback); setStatus("fallback"); } });
     return ()=>{ alive=false; };
-  },[facts,cacheKey,fallback]);
+  },[facts,cacheKey,fallback,collapsed]);
+  if(collapsed){
+    return (
+      <button type="button" className={`wc-micro wc-micro-${tone} wc-micro-collapsed`} onClick={()=>setRevealed(true)} title="Show context">
+        <span className="wc-micro-tag"><Sparkles size={12}/> Context</span>
+        <ChevronDown size={12} className="wc-micro-chev"/>
+      </button>
+    );
+  }
   return (
     <div className={`wc-micro wc-micro-${tone}`}>
-      <span className="wc-micro-tag"><Sparkles size={12}/> Context{status==="loading"&&<Loader2 className="wc-spin" size={12}/>}</span>
+      <span className="wc-micro-tag"><Sparkles size={12}/> Context{status==="loading"&&<Loader2 className="wc-spin" size={12}/>}
+        {min&&<button type="button" className="wc-micro-hide" onClick={()=>setRevealed(false)} title="Hide context"><ChevronUp size={12}/></button>}
+      </span>
       <p><MicroTypewriter text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/></p>
     </div>
   );
@@ -3073,6 +3092,7 @@ function DigestPanel({groupResults,koResults,liveGames,matchesPlayed,detailIds,o
   onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
   onOpenPreview:(id:string)=>void;onOpenDetail:(id:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
+  const {min,toggle}=useDigestMin();
   const [text,setText]=useState("");
   const [status,setStatus]=useState<"idle"|"loading"|"error">("idle");
   const [err,setErr]=useState("");
@@ -3153,47 +3173,56 @@ function DigestPanel({groupResults,koResults,liveGames,matchesPlayed,detailIds,o
   // and only inside the tournament window, so it never fires after the final's day.
   const wrapped=localDayKey(new Date())>DIGEST_FINAL_DAY;
   const hasData=matchesPlayed>0||liveGames.length>0||ALL_GROUP_MATCHES.some(f=>!groupResults[f.id]);
-  useEffect(()=>{ if(!wrapped&&hasData) generate(false); },[sig,hasData,wrapped]); // eslint-disable-line
+  useEffect(()=>{ if(!wrapped&&hasData&&!min) generate(false); },[sig,hasData,wrapped,min]); // eslint-disable-line
 
   if(wrapped) return <DigestHonorarium/>; // tournament's over — pay tribute, stop generating
   if(!hasData) return null;
   return (
-    <div className="wc-digest">
+    <div className={`wc-digest${min?" wc-digest-min":""}`}>
       <div className="wc-digest-head">
-        <span className="wc-digest-tag"><Sparkles size={13}/> Daily digest{note&&<span className="wc-digest-note"> · {note}</span>}</span>
-        <button className="wc-digest-refresh" onClick={()=>generate(true)} disabled={status==="loading"} title="Regenerate">
-          {status==="loading"?<Loader2 size={13} className="wc-spin"/>:<RotateCcw size={13}/>}
-        </button>
+        <span className="wc-digest-tag"><Sparkles size={13}/> Daily digest{!min&&note&&<span className="wc-digest-note"> · {note}</span>}</span>
+        <div className="wc-digest-head-actions">
+          {!min&&<button className="wc-digest-refresh" onClick={()=>generate(true)} disabled={status==="loading"} title="Regenerate">
+            {status==="loading"?<Loader2 size={13} className="wc-spin"/>:<RotateCcw size={13}/>}
+          </button>}
+          <button className="wc-digest-refresh" onClick={toggle} title={min?"Expand all digests":"Minimize all digests"} aria-label={min?"Expand all digests":"Minimize all digests"}>
+            {min?<ChevronDown size={13}/>:<ChevronUp size={13}/>}
+          </button>
+        </div>
       </div>
-      <p className="wc-digest-body">
+      {!min&&<p className="wc-digest-body">
         {text
           ? <Typewriter key={gen} text={`${timeGreeting()} — ${text}`} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup} onMatch={onMatch} hasMatch={hasMatch}/>
           : status==="error"
             ? <span className="wc-digest-err">Couldn’t generate the digest — {err}. <button className="wc-digest-retry" onClick={()=>generate(true)}>Retry</button></span>
             : <span className="wc-digest-loading">Generating today’s briefing…</span>}
-      </p>
+      </p>}
     </div>
   );
 }
 
 // Shown once the tournament is over — a fixed tribute, no model calls.
 function DigestHonorarium(){
+  const {min,toggle}=useDigestMin();
   return (
-    <div className="wc-digest wc-digest-honor">
+    <div className={`wc-digest wc-digest-honor${min?" wc-digest-min":""}`}>
       <div className="wc-digest-head">
         <span className="wc-digest-tag"><Trophy size={13}/> That's full time</span>
+        <button className="wc-digest-refresh" onClick={toggle} title={min?"Expand all digests":"Minimize all digests"} aria-label={min?"Expand all digests":"Minimize all digests"}>
+          {min?<ChevronDown size={13}/>:<ChevronUp size={13}/>}
+        </button>
       </div>
-      <p className="wc-digest-body">
+      {!min&&<p className="wc-digest-body">
         The 2026 FIFA World Cup is complete — the first 48-team finals, hosted across the
         United States, Mexico, and Canada. Thanks for following every goal, upset, and late
         twist with us. Until 2030.
-      </p>
-      <div className="wc-honor-stats">
+      </p>}
+      {!min&&<div className="wc-honor-stats">
         <div className="wc-honor-stat"><span className="wc-honor-num">48</span><span className="wc-honor-label">teams</span></div>
         <div className="wc-honor-stat"><span className="wc-honor-num">104</span><span className="wc-honor-label">matches</span></div>
         <div className="wc-honor-stat"><span className="wc-honor-num">16</span><span className="wc-honor-label">host cities</span></div>
         <div className="wc-honor-stat"><span className="wc-honor-num">1</span><span className="wc-honor-label">champion</span></div>
-      </div>
+      </div>}
     </div>
   );
 }
@@ -3302,6 +3331,11 @@ export default function App() {
   const [liveEventIds,setLiveEventIds]=useState<Record<string,string>>(()=>loadStore("wc26_eventids"));
   const [liveGames,setLiveGames]=useState<LiveGame[]>([]);
   const [updatedAt,setUpdatedAt]=useState<number|null>(null);
+
+  // Global "minimize all AI digests" preference (daily digest + every micro-digest), persisted.
+  const [digestsMin,setDigestsMin]=useState<boolean>(()=>{ try{ return localStorage.getItem("wc26_digests_min")==="1"; }catch{ return false; } });
+  const toggleDigestsMin=useCallback(()=>setDigestsMin(v=>{ const n=!v; try{ localStorage.setItem("wc26_digests_min",n?"1":"0"); }catch{ /* ignore */ } return n; }),[]);
+  const digestMinCtx=useMemo(()=>({min:digestsMin,toggle:toggleDigestsMin}),[digestsMin,toggleDigestsMin]);
 
   // ESPN-confirmed starting XIs, keyed by team code (last published lineup wins).
   // Persisted so a team's last confirmed XI survives reloads between match windows.
@@ -3452,6 +3486,7 @@ export default function App() {
   const groupsDone=GROUP_LETTERS.filter(l=>groupIsComplete(l,groupResults)).length;
 
   return (
+    <DigestMinContext.Provider value={digestMinCtx}>
     <div className={`wc-app${looseBallSeed!=null?" wc-kick-mode":""}`} style={teamTheme(themeCode)}>
       <style>{CSS}</style>
       {looseBallSeed!=null&&<LooseBall seed={looseBallSeed} onClose={()=>setLooseBallSeed(null)}/>}
@@ -3566,6 +3601,7 @@ export default function App() {
         </details>
       </footer>
     </div>
+    </DigestMinContext.Provider>
   );
 }
 
@@ -3781,6 +3817,9 @@ const CSS = `
 .wc-honor-num{font-family:'Anton',sans-serif;font-size:1.5rem;color:var(--gold);}
 .wc-honor-label{font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;color:var(--chalk-dim);margin-top:.2rem;}
 .wc-digest-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.45rem;}
+.wc-digest-head-actions{display:inline-flex;align-items:center;gap:.4rem;}
+.wc-digest-min{margin-bottom:0;}
+.wc-digest-min .wc-digest-head{margin-bottom:0;}
 .wc-digest-tag{display:inline-flex;align-items:center;gap:.4rem;font-size:.64rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);}
 .wc-digest-refresh{display:inline-flex;background:transparent;border:1px solid var(--pitch-line);border-radius:7px;color:var(--chalk-dim);padding:.25rem;}
 .wc-digest-refresh:hover:not(:disabled){color:var(--gold);border-color:rgba(215,163,61,.5);}
@@ -3803,6 +3842,14 @@ const CSS = `
 .wc-micro-team{background:rgba(244,241,232,.045);border-color:var(--pitch-line);}
 .wc-micro-recap{background:rgba(46,160,67,.08);border-color:rgba(46,160,67,.25);}
 .wc-micro-upcoming{background:rgba(215,163,61,.07);border-color:rgba(215,163,61,.22);}
+/* Collapsed micro-digest (while "minimize all" is on): a compact, clickable pill. */
+.wc-micro-collapsed{display:inline-flex;align-items:center;gap:.4rem;width:auto;cursor:pointer;padding:.32rem .6rem;}
+.wc-micro-collapsed .wc-micro-tag{margin-bottom:0;}
+.wc-micro-collapsed .wc-micro-chev{color:var(--chalk-dim);}
+.wc-micro-collapsed:hover{border-color:rgba(215,163,61,.5);}
+.wc-micro-collapsed:hover .wc-micro-chev{color:var(--gold);}
+.wc-micro-hide{display:inline-flex;align-items:center;background:none;border:none;padding:0;margin-left:.3rem;color:var(--chalk-dim);cursor:pointer;}
+.wc-micro-hide:hover{color:var(--gold);}
 
 /* projected-bracket note */
 .wc-bracket-note{display:flex;align-items:flex-start;gap:.5rem;max-width:760px;margin:0 0 1rem;font-size:.74rem;line-height:1.5;color:var(--chalk-dim);background:var(--pitch-card);border:1px solid var(--pitch-line);border-left:3px solid var(--gold);border-radius:8px;padding:.6rem .8rem;}
