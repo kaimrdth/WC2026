@@ -785,23 +785,28 @@ const clubOverrideKey=(code:string,name:string)=>`${code}|${cleanPlayerName(name
 
 // Convert an ESPN roster into the Player[] shape the pitch diagram expects, sorted
 // by formation place (GK → attack). Club is enriched from the static squad data.
-function detailTeamToXI(r:DetailTeam):Player[]{
-  const clubByFullName=new Map<string,string>();
-  const clubByLastName=new Map<string,string>();
-  const prof=TEAM_PROFILES[r.code];
+// Build a player-name → club resolver for a team from its static squad (matches by full
+// name, then surname, with manual overrides). Shared by the confirmed-XI conversion and
+// the match-detail pitch's "Club" label mode.
+function makeClubLookup(code:string){
+  const byFull=new Map<string,string>(), byLast=new Map<string,string>();
+  const prof=TEAM_PROFILES[code];
   if(prof) for(const p of prof.xi){
     if(!p.name||!p.club) continue;
-    const full=cleanPlayerName(p.name);
-    const last=lastName(p.name);
-    if(full) clubByFullName.set(full,p.club);
-    if(last&&!clubByLastName.has(last)) clubByLastName.set(last,p.club);
+    const full=cleanPlayerName(p.name), last=lastName(p.name);
+    if(full) byFull.set(full,p.club);
+    if(last&&!byLast.has(last)) byLast.set(last,p.club);
   }
+  return (name:string):string=>PLAYER_CLUB_OVERRIDES[clubOverrideKey(code,name)]
+    ?? byFull.get(cleanPlayerName(name))
+    ?? byLast.get(lastName(name))
+    ?? "";
+}
+function detailTeamToXI(r:DetailTeam):Player[]{
+  const club=makeClubLookup(r.code);
   return r.starters.map(p=>({
     name: p.captain?`${p.name} (C)`:p.name,
-    club: PLAYER_CLUB_OVERRIDES[clubOverrideKey(r.code,p.name)]
-      ?? clubByFullName.get(cleanPlayerName(p.name))
-      ?? clubByLastName.get(lastName(p.name))
-      ?? "",
+    club: club(p.name),
     pos: p.pos || "",
   }));
 }
@@ -2185,6 +2190,8 @@ function TeamsView({groupResults,koResults,liveByFixture,liveGoals,qualifiers,co
 const surname=(n:string)=>{const p=n.trim().split(" ");return p.length>1?p.slice(1).join(" "):n;};
 
 interface PlayerStat { goals:number; yellow:boolean; red:boolean; }
+// What each lineup dot shows — toggled in the match-detail modal.
+type PitchLabel = "pos"|"num"|"club";
 function PlayerBadges({p,stat}:{p:DetailPlayer;stat?:PlayerStat}){
   if(!stat?.goals && !p.off && !p.on && !stat?.yellow && !stat?.red) return null;
   return (
@@ -2197,7 +2204,7 @@ function PlayerBadges({p,stat}:{p:DetailPlayer;stat?:PlayerStat}){
   );
 }
 
-function DetailPitch({team,stats}:{team:DetailTeam;stats:Record<string,PlayerStat>}){
+function DetailPitch({team,stats,label}:{team:DetailTeam;stats:Record<string,PlayerStat>;label:PitchLabel}){
   const lines=[1,...(team.formation?team.formation.split("-").map(Number):[])];
   const total=lines.reduce((a,b)=>a+b,0);
   // Band by actual position (ESPN's order isn't reliable), then place each row left→right.
@@ -2207,6 +2214,10 @@ function DetailPitch({team,stats}:{team:DetailTeam;stats:Record<string,PlayerSta
     ? lines.map(size=>{const r=ordered.slice(idx,idx+size).sort((a,b)=>posSide(a.pos)-posSide(b.pos));idx+=size;return r;})
     : [team.starters];
   const numRows=rows.length;
+  const clubOf=useMemo(()=>makeClubLookup(team.code),[team.code]);
+  const dotText=(p:DetailPlayer)=> label==="num" ? (p.jersey||p.pos)
+    : label==="club" ? (clubOf(p.name)||p.pos)
+    : (p.pos||p.jersey);
   return (
     <div className="wc-detail-pitch-card" style={pitchAccentStyle(team.code)}>
       <div className="wc-detail-pitch-head">
@@ -2220,7 +2231,7 @@ function DetailPitch({team,stats}:{team:DetailTeam;stats:Record<string,PlayerSta
           return <div className="wc-pitch-row" style={{top:`${top}%`}} key={ri}>
             {row.map((p,i)=>(
               <div className="wc-pitch-player" style={{left:`${((i+1)/(row.length+1))*100}%`}} key={i}>
-                <div className={`wc-pitch-dot${p.off?" wc-pitch-dot-subbed":""}`}>{p.pos||p.jersey}</div>
+                <div className={`wc-pitch-dot${p.off?" wc-pitch-dot-subbed":""}${label==="club"?" wc-pitch-dot-pill":""}`} title={label==="club"?clubOf(p.name)||undefined:undefined}>{dotText(p)}</div>
                 <div className="wc-pitch-name">{surname(p.name)}</div>
                 <PlayerBadges p={p} stat={stats[p.name]}/>
               </div>
@@ -2301,6 +2312,8 @@ function MatchDetailModal({eventId,fixture,result,live,onClose,onSelectTeam,onSe
   const [data,setData]=useState<MatchDetail|null>(null);
   const [status,setStatus]=useState<"loading"|"ok"|"error">("loading");
   const [showMore,setShowMore]=useState(false);
+  const [pitchLabel,setPitchLabel]=useState<PitchLabel>(()=>{ try{ const v=localStorage.getItem("wc26_pitch_label"); return v==="num"||v==="club"?v:"pos"; }catch{ return "pos"; } });
+  const pickLabel=(v:PitchLabel)=>{ setPitchLabel(v); try{ localStorage.setItem("wc26_pitch_label",v); }catch{ /* quota */ } };
   useEffect(()=>{
     let alive=true; setStatus("loading");
     fetchMatchDetail(eventId)
@@ -2380,10 +2393,19 @@ function MatchDetailModal({eventId,fixture,result,live,onClose,onSelectTeam,onSe
               </div>
             )}
             {data.home&&data.away&&data.home.starters.length>0&&(
-              <div className="wc-detail-pitches">
-                <DetailPitch team={data.home} stats={stats}/>
-                <DetailPitch team={data.away} stats={stats}/>
-              </div>
+              <>
+                <div className="wc-pitch-toggle-wrap">
+                  <div className="wc-pitch-toggle" role="group" aria-label="Lineup labels">
+                    {([["pos","Position"],["num","Kit #"],["club","Club"]] as [PitchLabel,string][]).map(([v,l])=>(
+                      <button key={v} className={`wc-pitch-toggle-btn${pitchLabel===v?" wc-pitch-toggle-on":""}`} onClick={()=>pickLabel(v)}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="wc-detail-pitches">
+                  <DetailPitch team={data.home} stats={stats} label={pitchLabel}/>
+                  <DetailPitch team={data.away} stats={stats} label={pitchLabel}/>
+                </div>
+              </>
             )}
             <div className="wc-detail-timeline">
               <div className="wc-detail-tl-head">Match events</div>
@@ -4352,6 +4374,12 @@ const CSS = `
 .wc-stats-toggle:hover{color:var(--gold);border-color:rgba(215,163,61,.5);}
 .wc-detail-facts{display:flex;flex-wrap:wrap;gap:.4rem 1rem;justify-content:center;margin:.9rem 0 .2rem;padding-top:.8rem;border-top:1px solid var(--pitch-line);}
 .wc-detail-fact{display:inline-flex;align-items:center;gap:.32rem;font-size:.68rem;color:var(--chalk-dim);}
+.wc-pitch-toggle-wrap{display:flex;justify-content:center;margin-top:1rem;}
+.wc-pitch-toggle{display:inline-flex;gap:.2rem;background:var(--pitch-deep);border:1px solid var(--pitch-line);border-radius:9px;padding:.2rem;}
+.wc-pitch-toggle-btn{background:transparent;border:none;border-radius:7px;color:var(--chalk-dim);font:inherit;font-size:.66rem;font-weight:700;padding:.3rem .65rem;cursor:pointer;}
+.wc-pitch-toggle-btn:hover{color:var(--chalk);}
+.wc-pitch-toggle-on,.wc-pitch-toggle-on:hover{background:var(--pitch-card);color:var(--gold);}
+.wc-pitch-dot-pill{width:auto;min-width:1.75rem;max-width:5.5rem;border-radius:.7rem;padding:0 .4rem;overflow:hidden;text-overflow:ellipsis;}
 .wc-detail-pitches{display:grid;grid-template-columns:1fr;gap:1rem;padding:1.1rem 0;}
 @media(min-width:620px){.wc-detail-pitches{grid-template-columns:1fr 1fr;}}
 .wc-detail-pitch-card{display:flex;flex-direction:column;gap:.5rem;}
