@@ -2220,7 +2220,7 @@ function DetailPitch({team,stats}:{team:DetailTeam;stats:Record<string,PlayerSta
           return <div className="wc-pitch-row" style={{top:`${top}%`}} key={ri}>
             {row.map((p,i)=>(
               <div className="wc-pitch-player" style={{left:`${((i+1)/(row.length+1))*100}%`}} key={i}>
-                <div className={`wc-pitch-dot${p.off?" wc-pitch-dot-subbed":""}`}>{p.jersey||p.pos}</div>
+                <div className={`wc-pitch-dot${p.off?" wc-pitch-dot-subbed":""}`}>{p.pos||p.jersey}</div>
                 <div className="wc-pitch-name">{surname(p.name)}</div>
                 <PlayerBadges p={p} stat={stats[p.name]}/>
               </div>
