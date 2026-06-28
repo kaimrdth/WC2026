@@ -621,7 +621,51 @@ interface DetailPlayer { name:string; jersey:string; pos:string; place:number; s
 interface DetailTeam { side:"home"|"away"; code:string; name:string; formation:string; starters:DetailPlayer[]; bench:DetailPlayer[]; }
 type TLType = "goal"|"yellow"|"red"|"sub";
 interface TimelineEvent { order:number; minute:string; side:"home"|"away"; type:TLType; main:string; detail?:string; }
-interface MatchDetail { home:DetailTeam|null; away:DetailTeam|null; events:TimelineEvent[]; }
+// One team-vs-team match stat: numeric home/away (for the bars) + display strings.
+interface StatRow { key:string; label:string; home:number; away:number; homeText:string; awayText:string; pct:boolean; }
+interface MatchMeta { venue?:string; city?:string; attendance?:number; referee?:string; }
+interface MatchDetail { home:DetailTeam|null; away:DetailTeam|null; events:TimelineEvent[]; stats:StatRow[]; statsMore:StatRow[]; meta:MatchMeta; }
+
+// Curated ESPN boxscore stats. `pct` ones are normalised to a 0–100% display (ESPN is
+// inconsistent — possession comes as 54, pass completion as 0.8). Primary set shows by
+// default; the "more" set sits behind an expander.
+const STAT_DEFS_PRIMARY:{key:string;label:string;pct?:boolean}[]=[
+  {key:"possessionPct",label:"Possession",pct:true},
+  {key:"totalShots",label:"Shots"},
+  {key:"shotsOnTarget",label:"Shots on target"},
+  {key:"wonCorners",label:"Corners"},
+  {key:"foulsCommitted",label:"Fouls"},
+  {key:"passPct",label:"Pass accuracy",pct:true},
+  {key:"saves",label:"Saves"},
+];
+const STAT_DEFS_MORE:{key:string;label:string;pct?:boolean}[]=[
+  {key:"offsides",label:"Offsides"},
+  {key:"yellowCards",label:"Yellow cards"},
+  {key:"blockedShots",label:"Blocked shots"},
+  {key:"totalTackles",label:"Tackles"},
+  {key:"interceptions",label:"Interceptions"},
+  {key:"totalClearance",label:"Clearances"},
+  {key:"totalCrosses",label:"Crosses"},
+  {key:"totalLongBalls",label:"Long balls"},
+];
+const statNum=(v:any):number=>{ const n=parseFloat(String(v??"").replace(/[,%]/g,"")); return Number.isFinite(n)?n:0; };
+const statPct=(n:number):string=>`${n<=1?Math.round(n*100):Math.round(n)}%`;
+function buildStatRows(defs:{key:string;label:string;pct?:boolean}[], boxHome:any, boxAway:any):StatRow[]{
+  const find=(t:any,k:string)=>(t?.statistics??[]).find((x:any)=>x.name===k);
+  const rows:StatRow[]=[];
+  for(const def of defs){
+    const hs=find(boxHome,def.key), as=find(boxAway,def.key);
+    if(!hs&&!as) continue;
+    const hv=statNum(hs?.displayValue), av=statNum(as?.displayValue);
+    rows.push({
+      key:def.key, label:def.label, home:hv, away:av,
+      homeText:def.pct?statPct(hv):String(hs?.displayValue??Math.round(hv)),
+      awayText:def.pct?statPct(av):String(as?.displayValue??Math.round(av)),
+      pct:!!def.pct,
+    });
+  }
+  return rows;
+}
 
 function parseRoster(r:any):DetailTeam {
   const players:DetailPlayer[] = (r.roster ?? []).map((p:any)=>({
@@ -653,6 +697,21 @@ async function fetchMatchDetail(eventId:string):Promise<MatchDetail> {
   const away = rosters.find((r:any)=>r.homeAway==="away");
   const homeTeam = home ? parseRoster(home) : null;
   const awayTeam = away ? parseRoster(away) : null;
+
+  // Team match stats (possession, shots, …) and match meta (venue/attendance/referee) —
+  // both already in this same payload; we just weren't parsing them.
+  const boxTeams = s.boxscore?.teams ?? [];
+  const boxHome = boxTeams.find((t:any)=>t.homeAway==="home");
+  const boxAway = boxTeams.find((t:any)=>t.homeAway==="away");
+  const stats = buildStatRows(STAT_DEFS_PRIMARY, boxHome, boxAway);
+  const statsMore = buildStatRows(STAT_DEFS_MORE, boxHome, boxAway);
+  const gi = s.gameInfo ?? {};
+  const ref = (gi.officials ?? []).find((o:any)=>/referee/i.test(o.position?.name ?? o.position?.displayName ?? ""))?.displayName
+    ?? gi.officials?.[0]?.displayName;
+  const meta:MatchMeta = {
+    venue: gi.venue?.fullName, city: gi.venue?.address?.city,
+    attendance: typeof gi.attendance==="number" ? gi.attendance : undefined, referee: ref,
+  };
 
   // Map EVERY name variant a team might appear as in commentary (United States / USA /
   // USMNT / etc.) to its side — matching only the roster's displayName silently drops goals.
@@ -697,7 +756,7 @@ async function fetchMatchDetail(eventId:string):Promise<MatchDetail> {
       if (side && m) events.push({ order:order++, minute, side, type:"yellow", main:m[1].trim() });
     }
   }
-  return { home:homeTeam, away:awayTeam, events };
+  return { home:homeTeam, away:awayTeam, events, stats, statsMore, meta };
 }
 
 // ── Confirmed lineups (ESPN-sourced) ──────────────────────────────────────────
@@ -2193,11 +2252,41 @@ function TLItem({ev}:{ev:TimelineEvent}){
   );
 }
 
+const statFill=(code:string)=>brighten(TEAM_COLORS[code]?.accent ?? "#d7a33d");
+function StatComparison({rows,homeCode,awayCode,title="Match stats"}:{rows:StatRow[];homeCode:string;awayCode:string;title?:string}){
+  if(!rows.length) return null;
+  const hColor=statFill(homeCode), aColor=statFill(awayCode);
+  return (
+    <div className="wc-stats" style={{["--h-stat" as string]:hColor,["--a-stat" as string]:aColor} as CSSProperties}>
+      <div className="wc-stats-title">{title}</div>
+      {rows.map(r=>{
+        const tot=r.home+r.away;
+        const hp=tot>0?(r.home/tot)*100:50;
+        const hLead=r.home>r.away, aLead=r.away>r.home;
+        return (
+          <div className="wc-stat-row" key={r.key}>
+            <span className={`wc-stat-num${hLead?" wc-stat-lead":""}`}>{r.homeText}</span>
+            <div className="wc-stat-mid">
+              <span className="wc-stat-name">{r.label}</span>
+              <div className="wc-stat-track">
+                <span className="wc-stat-fill wc-stat-fill-h" style={{width:`${hp}%`}}/>
+                <span className="wc-stat-fill wc-stat-fill-a" style={{width:`${100-hp}%`}}/>
+              </div>
+            </div>
+            <span className={`wc-stat-num${aLead?" wc-stat-lead":""}`}>{r.awayText}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MatchDetailModal({eventId,fixture,result,live,onClose,onSelectTeam,onSelectGroup}:{
   eventId:string;fixture:MatchInfo;result?:ScoreResult;live?:LiveGame;onClose:()=>void;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
 }){
   const [data,setData]=useState<MatchDetail|null>(null);
   const [status,setStatus]=useState<"loading"|"ok"|"error">("loading");
+  const [showMore,setShowMore]=useState(false);
   useEffect(()=>{
     let alive=true; setStatus("loading");
     fetchMatchDetail(eventId)
@@ -2260,6 +2349,22 @@ function MatchDetailModal({eventId,fixture,result,live,onClose,onSelectTeam,onSe
         {status==="error"&&<div className="wc-detail-loading">Couldn’t load match detail.</div>}
         {status==="ok"&&data&&(
           <>
+            {data.stats.length>0&&(
+              <>
+                <StatComparison rows={showMore?[...data.stats,...data.statsMore]:data.stats} homeCode={fixture.homeCode} awayCode={fixture.awayCode}/>
+                {data.statsMore.length>0&&(
+                  <button className="wc-stats-toggle" onClick={()=>setShowMore(v=>!v)}>
+                    {showMore?<><ChevronUp size={12}/> Fewer stats</>:<><ChevronDown size={12}/> More stats</>}
+                  </button>
+                )}
+              </>
+            )}
+            {(data.meta.attendance||data.meta.referee)&&(
+              <div className="wc-detail-facts">
+                {data.meta.attendance!=null&&<span className="wc-detail-fact"><Users size={12}/> {data.meta.attendance.toLocaleString()} attendance</span>}
+                {data.meta.referee&&<span className="wc-detail-fact">Referee: {data.meta.referee}</span>}
+              </div>
+            )}
             {data.home&&data.away&&data.home.starters.length>0&&(
               <div className="wc-detail-pitches">
                 <DetailPitch team={data.home} stats={stats}/>
@@ -2864,6 +2969,8 @@ function buildMatchRecapFacts(fixture:MatchInfo, result:ScoreResult|undefined, l
   const home=TEAM_BY_CODE[fixture.homeCode], away=TEAM_BY_CODE[fixture.awayCode];
   const score=result?`${result.homeGoals}-${result.awayGoals}`:live?`${live.homeGoals}-${live.awayGoals}`:"score unavailable";
   const events=(data?.events??[]).slice(0,10).map(e=>`${e.minute} ${e.type}: ${e.main}${e.detail?` (${e.detail})`:""}`);
+  const allStats=[...(data?.stats??[]),...(data?.statsMore??[])];
+  const statLine=allStats.map(r=>`${r.label} ${home.name} ${r.homeText} vs ${away.name} ${r.awayText}`).join("; ");
   return [
     live?"TYPE: live match micro-digest":"TYPE: past match recap micro-digest",
     `Match: ${home.name} vs ${away.name}`,
@@ -2871,7 +2978,9 @@ function buildMatchRecapFacts(fixture:MatchInfo, result:ScoreResult|undefined, l
     `Context: ${matchLabel(fixture)}; ${fixture.venue}, ${fixture.city}`,
     `Events: ${events.join("; ") || "no major timeline events supplied"}`,
     data?.home&&data?.away ? `Lineups: ${data.home.name} ${data.home.formation}; ${data.away.name} ${data.away.formation}` : "Lineups: not supplied",
-  ].join("\n");
+    statLine ? `Match stats: ${statLine}` : "Match stats: not supplied",
+    statLine ? "Guidance: interpret the stats — what do they reveal about how the game was played (who controlled it, who was wasteful or clinical, who defended/rode their luck, whether the scoreline flattered either side)? Draw a conclusion; do NOT just recite the numbers." : "",
+  ].filter(Boolean).join("\n");
 }
 function fallbackMatchRecap(fixture:MatchInfo, result:ScoreResult|undefined, live:LiveGame|undefined):string{
   const home=TEAM_BY_CODE[fixture.homeCode], away=TEAM_BY_CODE[fixture.awayCode];
@@ -4213,6 +4322,22 @@ const CSS = `
 .wc-detail-score-num{font-family:'Anton',sans-serif;font-size:2rem;color:var(--gold);line-height:1;}
 .wc-detail-when{font-size:.6rem;color:var(--chalk-dim);text-align:center;max-width:180px;}
 .wc-detail-loading{display:flex;align-items:center;justify-content:center;gap:.5rem;color:var(--chalk-dim);padding:2.5rem 1rem;font-size:.85rem;}
+/* Team-vs-team match stat comparison bars (ESPN boxscore). */
+.wc-stats{margin:1rem 0 .2rem;display:flex;flex-direction:column;gap:.55rem;}
+.wc-stats-title{font-size:.62rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);margin-bottom:.1rem;}
+.wc-stat-row{display:grid;grid-template-columns:2.6rem 1fr 2.6rem;align-items:center;gap:.5rem;}
+.wc-stat-num{font-size:.78rem;font-weight:700;color:var(--chalk-dim);text-align:center;font-variant-numeric:tabular-nums;}
+.wc-stat-num.wc-stat-lead{color:var(--chalk);}
+.wc-stat-mid{display:flex;flex-direction:column;gap:.18rem;min-width:0;}
+.wc-stat-name{font-size:.62rem;text-align:center;color:var(--chalk-dim);letter-spacing:.02em;}
+.wc-stat-track{display:flex;height:.42rem;border-radius:3px;overflow:hidden;background:var(--pitch-deep);}
+.wc-stat-fill{display:block;height:100%;}
+.wc-stat-fill-h{background:var(--h-stat);border-radius:3px 0 0 3px;}
+.wc-stat-fill-a{background:var(--a-stat);opacity:.7;border-radius:0 3px 3px 0;margin-left:auto;}
+.wc-stats-toggle{display:inline-flex;align-items:center;gap:.3rem;margin:.5rem auto 0;background:transparent;border:1px solid var(--pitch-line);border-radius:7px;color:var(--chalk-dim);padding:.28rem .6rem;font-size:.66rem;font-weight:700;cursor:pointer;}
+.wc-stats-toggle:hover{color:var(--gold);border-color:rgba(215,163,61,.5);}
+.wc-detail-facts{display:flex;flex-wrap:wrap;gap:.4rem 1rem;justify-content:center;margin:.9rem 0 .2rem;padding-top:.8rem;border-top:1px solid var(--pitch-line);}
+.wc-detail-fact{display:inline-flex;align-items:center;gap:.32rem;font-size:.68rem;color:var(--chalk-dim);}
 .wc-detail-pitches{display:grid;grid-template-columns:1fr;gap:1rem;padding:1.1rem 0;}
 @media(min-width:620px){.wc-detail-pitches{grid-template-columns:1fr 1fr;}}
 .wc-detail-pitch-card{display:flex;flex-direction:column;gap:.5rem;}
