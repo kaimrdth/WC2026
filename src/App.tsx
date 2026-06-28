@@ -1044,33 +1044,38 @@ function StarRating({stars}:{stars:number}) {
 // Handles both standard abbreviations (CB, RW, CDM, GK, ST) and ESPN's (G, CD, AM-R, F).
 function posRank(pos:string):number{
   // ESPN encodes side as a "-R"/"-L" suffix (AM-R, CD-L); strip it for classification.
-  const p=(pos||"").toUpperCase().replace(/[-\s]?[LR]$/,"");
+  const raw=(pos||"").toUpperCase();
+  const p=raw.replace(/[-\s]?[LR]$/,"");
   if(p==="G"||p.includes("GK")) return 0;                                           // goalkeeper
   if(p.includes("WB")) return 15;                                                   // wing-backs
   if(p==="CD"||p==="D"||p.endsWith("B")||p==="SW") return 10;                       // CB/CD/RB/LB/sweeper
   if(p.includes("DM")) return 20;                                                   // defensive mid
   if(p.includes("AM")) return 40;                                                   // attacking mid
-  // Central forwards rank above wingers so a lone striker (the "1" in 4-2-3-1) lands
-  // in the top row no matter where ESPN lists it, leaving wide men in the band below.
-  if(p==="F"||p==="CF"||p==="FW"||p.includes("ST")||p.includes("SS")) return 50;    // central forward
+  if(p==="F"||p==="CF"||p==="FW"||p.includes("ST")||p.includes("SS")){
+    // A lone central striker (no side) sits at the very apex; a sided centre-forward
+    // (CF-R/CF-L) is a second striker and bands just below it — so in e.g. a 3-4-2-1
+    // the bare "F" takes the "1" and "CF-L" drops into the "2".
+    const sided=/[-\s][LR]$/.test(raw)||raw[0]==="L"||raw[0]==="R";
+    return sided?50:52;                                                             // central forward
+  }
   if(p.endsWith("W")||p.endsWith("F")||p.includes("W")) return 45;                  // winger / wide forward
   if(p.includes("M")) return 30;                                                    // central/wide mid
   return 35;
 }
-// Horizontal placement within a row. Returns a signed magnitude: outer (touchline)
-// roles — full-backs, wing-backs, wingers — sit wider (±2) than inside roles —
-// centre-backs, inside mids (±1) — on the same flank, so a RB lands outside a RCB.
-// Side comes from a "-R"/"-L" suffix (ESPN) or an L/R prefix (standard); 0 = central.
+// Horizontal placement within a row, as a signed magnitude. The key distinction: a side
+// given by a PREFIX letter (RB, LB, RM, LM, RW, LW, RWB) is a wide/flank role that hugs
+// the touchline (±2), while a side given by a SUFFIX (-R/-L, e.g. CM-R, CD-L, AM-R) is a
+// central role merely shaded to a side and sits narrower (±1). So a right-back/right-mid
+// lands outside a right centre-back/central-mid. 0 = central (no side).
 function posSide(pos:string):number{
   const raw=(pos||"").toUpperCase().trim();
-  let side=0;
-  if(/[-\s]R$/.test(raw)) side=1;
-  else if(/[-\s]L$/.test(raw)) side=-1;
-  else if(raw[0]==="L") side=-1;
-  else if(raw[0]==="R") side=1;
+  const suf=/[-\s]([LR])$/.exec(raw); // central role shaded to a side: CM-R, CD-L, AM-R
+  let side=0, prefix=false;
+  if(suf){ side=suf[1]==="R"?1:-1; }
+  else if(raw[0]==="L"){ side=-1; prefix=true; }
+  else if(raw[0]==="R"){ side=1; prefix=true; }
   if(!side) return 0;
-  const core=raw.replace(/[-\s]?[LR]$/,"");
-  const outer=/WB/.test(core)||/^[LR]B$/.test(raw)||/W$/.test(core)||/^[LR]W$/.test(raw);
+  const outer=prefix&&!/CB$/.test(raw); // RCB/LCB (rare) are central, not wide
   return side*(outer?2:1);
 }
 
