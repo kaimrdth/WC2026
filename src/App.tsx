@@ -1966,12 +1966,15 @@ function BracketCard({m,result,live,onOpen}:{
       </div>
     );
   };
-  const shortDate=(()=>{const d=new Date(f.kickoff);return isNaN(d.getTime())?"":d.toLocaleDateString(undefined,{month:"short",day:"numeric"});})();
-  const foot=result?"FT":live?<span className="wc-br2-live"><span className="wc-live-dot"/>{live.clock||"LIVE"}</span>:shortDate;
+  const k=formatKickoff(f.kickoff);
+  // Upcoming/TBD matches still have a known date, time and venue — surface them.
+  const foot=result?"FT":live?<span className="wc-br2-live"><span className="wc-live-dot"/>{live.clock||"LIVE"}</span>
+    :<span className="wc-br2-when">{k.date}{k.time?<span className="wc-br2-time"> · {k.time}</span>:null}</span>;
+  const matchup=m.home.team&&m.away.team?`${m.home.team.name} v ${m.away.team.name}`:`${m.home.label} v ${m.away.label}`;
   return (
-    <button className="wc-br2-card" onClick={()=>onOpen(m)} title={m.home.team&&m.away.team?`${m.home.team.name} v ${m.away.team.name}`:"Match"}>
+    <button className="wc-br2-card" onClick={()=>onOpen(m)} title={`${matchup} — ${f.venue}, ${f.city}`}>
       <div className="wc-br2-teams">{teamRow(m.home)}{teamRow(m.away)}</div>
-      <div className="wc-br2-foot">{foot}</div>
+      <div className="wc-br2-foot">{foot}{!result&&!live&&<span className="wc-br2-venue">{f.city}</span>}</div>
     </button>
   );
 }
@@ -2123,6 +2126,7 @@ function KnockoutView({groupResults,koResults,koTeams,goalsByFixture,liveByFixtu
 }){
   const [view,setView]=useState<"bracket"|"schedule">("bracket");
   const ko=useMemo(()=>resolveKnockout(groupResults,koResults,koTeams),[groupResults,koResults,koTeams]);
+  const groupsDone=useMemo(()=>groupStageComplete(groupResults),[groupResults]);
   return (
     <>
       <div className="wc-groups-bar">
@@ -2132,7 +2136,9 @@ function KnockoutView({groupResults,koResults,koTeams,goalsByFixture,liveByFixtu
         </div>
       </div>
       <div className="wc-bracket-note">
-        <Info size={14}/> Real knockout schedule with dates &amp; venues. Round-of-32 matchups are projected from the current group standings; third-place qualifiers and later rounds fill in as results come through.
+        <Info size={14}/> {groupsDone
+          ? <>Real knockout schedule with dates &amp; venues. Later rounds fill in as results come through.</>
+          : <>Real knockout schedule with dates &amp; venues. Round-of-32 matchups are projected from the current group standings; third-place qualifiers and later rounds fill in as results come through.</>}
       </div>
       {view==="bracket"
         ? <KoBracket ko={ko} koResults={koResults} liveByFixture={liveByFixture} goalsByFixture={goalsByFixture}
@@ -2692,9 +2698,10 @@ function StageNarrative({facts,cacheKey,fallback,onSelectTeam,onSelectGroup}:{
   );
 }
 
-function GroupStageReview({groupResults,qualifiers,goals,cards,matchStats,onSelectTeam,onSelectGroup}:{
+function GroupStageReview({groupResults,qualifiers,goals,cards,matchStats,detailIds,onOpenDetail,onSelectTeam,onSelectGroup}:{
   groupResults:Record<string,ScoreResult>;qualifiers:ReturnType<typeof computeQualifiers>;
   goals:GoalEvent[];cards:CardEvent[];matchStats:Record<string,EventStat>;
+  detailIds:Set<string>;onOpenDetail:(id:string)=>void;
   onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
 }){
   const complete=groupStageComplete(groupResults);
@@ -2706,6 +2713,18 @@ function GroupStageReview({groupResults,qualifiers,goals,cards,matchStats,onSele
   const ms=useMemo(()=>stageMatches(groupResults),[groupResults]);
   const big=useMemo(()=>[...ms].sort((a,b)=>b.margin-a.margin||b.total-a.total)[0],[ms]);
   const fest=useMemo(()=>[...ms].sort((a,b)=>b.total-a.total||b.margin-a.margin)[0],[ms]);
+  // Biggest upset: a decisive result where the winner was ranked well below the loser.
+  const upset=useMemo(()=>{
+    let best:StageMatch|undefined, bestGap=0;
+    for(const m of ms){
+      if(m.hg===m.ag) continue;
+      const w=TEAM_BY_CODE[m.hg>m.ag?m.home:m.away], l=TEAM_BY_CODE[m.hg>m.ag?m.away:m.home];
+      if(!w||!l) continue;
+      const gap=w.fifaRank-l.fifaRank; // winner ranked worse (higher number) than loser → upset
+      if(gap>bestGap){ bestGap=gap; best=m; }
+    }
+    return best;
+  },[ms]);
   const qCodes=useMemo(()=>new Set([...qualifiers.winners,...qualifiers.runnersUp,...qualifiers.bestThirds].map(t=>t.code)),[qualifiers]);
   const fallen=useMemo(()=>TEAMS.filter(t=>!qCodes.has(t.code)).sort((a,b)=>a.fifaRank-b.fifaRank).slice(0,5),[qCodes]);
   const risen=useMemo(()=>[...qualifiers.bestThirds,...qualifiers.runnersUp].sort((a,b)=>b.fifaRank-a.fifaRank).slice(0,5),[qualifiers]);
@@ -2726,12 +2745,29 @@ function GroupStageReview({groupResults,qualifiers,goals,cards,matchStats,onSele
     );
   }
 
-  const scoreLine=(m:StageMatch)=>(
-    <span className="wc-rv-score">
-      <button className="wc-rv-teamlink" onClick={()=>onSelectTeam(m.home)}>{TEAM_BY_CODE[m.home]?.name??m.home}</button>
-      <b>{m.hg}–{m.ag}</b>
-      <button className="wc-rv-teamlink" onClick={()=>onSelectTeam(m.away)}>{TEAM_BY_CODE[m.away]?.name??m.away}</button>
-    </span>
+  // A standout-match row that opens the match recap when we have its details.
+  const matchRow=(label:string,m:StageMatch|undefined,note?:string)=>{
+    if(!m) return null;
+    const can=detailIds.has(m.fid);
+    return (
+      <button type="button" className={`wc-rv-match${can?" wc-rv-match-link":""}`} onClick={can?()=>onOpenDetail(m.fid):undefined} disabled={!can}>
+        <span className="wc-rv-matchlabel">{label}</span>
+        <span className="wc-rv-score">
+          <span className="wc-rv-mteam"><Flag code={m.home} className="wc-flag-sm"/>{TEAM_BY_CODE[m.home]?.name??m.home}</span>
+          <b>{m.hg}–{m.ag}</b>
+          <span className="wc-rv-mteam">{TEAM_BY_CODE[m.away]?.name??m.away}<Flag code={m.away} className="wc-flag-sm"/></span>
+        </span>
+        {note&&<span className="wc-rv-matchnote">{note}</span>}
+        {can&&<span className="wc-rv-chev">›</span>}
+      </button>
+    );
+  };
+  const shockRow=(t:Team|StandingRow)=>(
+    <button type="button" className="wc-shock-row" key={t.code} onClick={()=>onSelectTeam(t.code)} title={t.name}>
+      <Flag code={t.code} className="wc-flag-sm"/>
+      <span className="wc-shock-name">{t.name}</span>
+      <span className="wc-shock-rank">#{t.fifaRank}</span>
+    </button>
   );
   const statRow=(label:string, lead:{c:string;v:number}|undefined, fmt:(v:number)=>string)=> lead?(
     <div className="wc-rv-statrow">
@@ -2767,17 +2803,27 @@ function GroupStageReview({groupResults,qualifiers,goals,cards,matchStats,onSele
 
         <section className="wc-stats-panel">
           <h3 className="wc-stats-h"><ArrowDown size={15}/> Biggest shocks</h3>
-          <div className="wc-rv-sub">Big names heading home</div>
-          <div className="wc-rv-chips">{fallen.map(t=><TeamChip key={t.code} team={t} onSelect={onSelectTeam}/>)}</div>
-          <div className="wc-rv-sub" style={{marginTop:".7rem"}}>Lowest-ranked sides still standing</div>
-          <div className="wc-rv-chips">{risen.map(t=><TeamChip key={t.code} team={t} onSelect={onSelectTeam}/>)}</div>
+          <div className="wc-shock-cols">
+            <div className="wc-shock-col">
+              <div className="wc-rv-sub wc-shock-out-head">Crashed out</div>
+              {fallen.map(shockRow)}
+            </div>
+            <div className="wc-shock-col">
+              <div className="wc-rv-sub wc-shock-in-head">Overachievers</div>
+              {risen.map(shockRow)}
+            </div>
+          </div>
+          <div className="wc-shock-note">Number = FIFA world ranking.</div>
         </section>
 
         <section className="wc-stats-panel">
           <h3 className="wc-stats-h"><BallIcon size={14}/> Standout matches</h3>
-          {big&&<div className="wc-rv-match"><span className="wc-rv-matchlabel">Biggest win</span>{scoreLine(big)}</div>}
-          {fest&&<div className="wc-rv-match"><span className="wc-rv-matchlabel">Goal-fest</span>{scoreLine(fest)}<span className="wc-rv-matchnote">{fest.total} goals</span></div>}
-          {reds.length>0&&<div className="wc-rv-match"><span className="wc-rv-matchlabel">Red cards</span><span className="wc-rv-score">{reds.length} shown across the group stage</span></div>}
+          <div className="wc-rv-matches">
+            {matchRow("Biggest win",big)}
+            {matchRow("Goal-fest",fest,`${fest?.total} goals`)}
+            {upset&&matchRow("Biggest upset",upset)}
+            {reds.length>0&&<div className="wc-rv-match wc-rv-match-stat"><span className="wc-rv-matchlabel">Red cards</span><span className="wc-rv-score">{reds.length} shown across the group stage</span></div>}
+          </div>
         </section>
 
         {agg.size>0&&(
@@ -3773,7 +3819,10 @@ function LooseBall({seed,onClose}:{seed:number;onClose:()=>void}) {
 }
 
 export default function App() {
-  const [stage,setStage]=useState("groups");
+  // Once the group stage is done we're in the knockouts — land there by default.
+  const [stage,setStage]=useState(()=>{
+    try{ return groupStageComplete(JSON.parse(localStorage.getItem("wc26_results")||"{}"))?"knockout":"groups"; }catch{ return "groups"; }
+  });
   const [looseBallSeed,setLooseBallSeed]=useState<number|null>(null);
   const titleTapsRef=useRef<number[]>([]);
   // All scores come from the live feed — this is a tracker, not a simulator.
@@ -4013,7 +4062,7 @@ export default function App() {
         <div className="wc-nav-explore">
           {groupsComplete&&(
             <button className={`wc-nav-btn wc-nav-teams${stage==="review"?" wc-nav-active":""}`} onClick={()=>setStage("review")}>
-              <Sparkles size={14}/> Recap
+              <Sparkles size={14}/> Group Recap
             </button>
           )}
           <button className={`wc-nav-btn wc-nav-teams${stage==="stats"?" wc-nav-active":""}`} onClick={()=>setStage("stats")}>
@@ -4035,7 +4084,7 @@ export default function App() {
         {stage==="thirds"&&<ThirdPlaceTableView groupResults={groupResults} liveByFixture={liveByFixture} onSelectTeam={goToTeam}/>}
         {stage==="review"&&(
           <GroupStageReview groupResults={groupResults} qualifiers={qualifiers} goals={liveGoals} cards={liveCards}
-            matchStats={matchStats} onSelectTeam={goToTeam} onSelectGroup={goToGroup}/>
+            matchStats={matchStats} detailIds={detailIds} onOpenDetail={setDetailId} onSelectTeam={goToTeam} onSelectGroup={goToGroup}/>
         )}
         {stage==="stats"&&(
           <StatsView goals={liveGoals} cards={liveCards} matchesPlayed={liveMatchesPlayed} matchStats={matchStats} onSelectTeam={goToTeam}/>
@@ -4598,7 +4647,10 @@ const CSS = `
 .wc-br2-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;font-weight:700;letter-spacing:.02em;}
 .wc-br2-score{font-family:'JetBrains Mono',monospace;font-weight:700;flex-shrink:0;}
 .wc-br2-pk{font-size:.6rem;color:var(--chalk-dim);}
-.wc-br2-foot{margin-top:.18rem;font-size:.56rem;color:var(--chalk-dim);letter-spacing:.02em;}
+.wc-br2-foot{margin-top:.18rem;font-size:.56rem;color:var(--chalk-dim);letter-spacing:.02em;display:flex;align-items:baseline;justify-content:space-between;gap:.3rem;}
+.wc-br2-when{white-space:nowrap;}
+.wc-br2-time{color:var(--chalk);}
+.wc-br2-venue{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.75;}
 .wc-br2-live{display:inline-flex;align-items:center;gap:.25rem;color:#ff8a8a;font-weight:700;}
 /* connectors — LEFT side: outgoing right, incoming left */
 .wc-br2-l.wc-br2-src .wc-br2-match::after{content:"";position:absolute;right:0;width:var(--g);box-sizing:border-box;border-right:2px solid var(--ln);}
@@ -4698,14 +4750,27 @@ const CSS = `
 @media(min-width:780px){.wc-review-grid{grid-template-columns:1fr 1fr;}}
 .wc-rv-sub{font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--chalk-dim);margin-bottom:.4rem;}
 .wc-rv-chips{display:flex;flex-wrap:wrap;gap:.35rem;}
-.wc-rv-match{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;padding:.45rem 0;border-top:1px solid var(--pitch-line);font-size:.82rem;}
-.wc-rv-match:first-of-type{border-top:none;padding-top:0;}
+.wc-rv-matches{display:flex;flex-direction:column;}
+.wc-rv-match{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;width:100%;text-align:left;background:none;border:none;border-top:1px solid var(--pitch-line);padding:.55rem 0;font:inherit;font-size:.82rem;color:var(--chalk-dim);}
+.wc-rv-matches>.wc-rv-match:first-child{border-top:none;padding-top:0;}
+.wc-rv-match-link{cursor:pointer;}
+.wc-rv-match-link:hover{color:var(--chalk);}
+.wc-rv-match-link:hover .wc-rv-chev{color:var(--gold);}
 .wc-rv-matchlabel{font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--gold);min-width:5rem;}
-.wc-rv-score{display:inline-flex;align-items:center;gap:.4rem;color:var(--chalk-dim);}
-.wc-rv-score b{font-family:'JetBrains Mono',monospace;color:var(--chalk);}
-.wc-rv-teamlink{background:none;border:none;padding:0;font:inherit;color:var(--chalk);cursor:pointer;}
-.wc-rv-teamlink:hover{color:var(--gold);}
-.wc-rv-matchnote{font-size:.66rem;color:var(--chalk-dim);margin-left:auto;}
+.wc-rv-score{display:inline-flex;align-items:center;gap:.45rem;color:var(--chalk);}
+.wc-rv-mteam{display:inline-flex;align-items:center;gap:.3rem;}
+.wc-rv-score b{font-family:'JetBrains Mono',monospace;}
+.wc-rv-matchnote{font-size:.66rem;color:var(--chalk-dim);}
+.wc-rv-chev{margin-left:auto;color:var(--chalk-dim);font-weight:700;}
+.wc-shock-cols{display:grid;grid-template-columns:1fr 1fr;gap:.5rem 1rem;}
+.wc-shock-col{display:flex;flex-direction:column;gap:.15rem;}
+.wc-shock-out-head{color:#f3a39a;margin-bottom:.2rem;}
+.wc-shock-in-head{color:#7bd49a;margin-bottom:.2rem;}
+.wc-shock-row{display:flex;align-items:center;gap:.4rem;background:none;border:none;padding:.28rem .3rem;border-radius:6px;font:inherit;color:var(--chalk);cursor:pointer;text-align:left;}
+.wc-shock-row:hover{background:rgba(244,241,232,.06);}
+.wc-shock-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.76rem;}
+.wc-shock-rank{font-family:'JetBrains Mono',monospace;font-size:.62rem;font-weight:700;color:var(--chalk-dim);background:var(--pitch-deep);border-radius:4px;padding:.1rem .32rem;}
+.wc-shock-note{margin-top:.6rem;font-size:.58rem;color:var(--chalk-dim);}
 .wc-rv-statrow{display:flex;align-items:center;gap:.5rem;padding:.45rem 0;border-top:1px solid var(--pitch-line);}
 .wc-rv-statrow:first-of-type{border-top:none;padding-top:0;}
 .wc-rv-statlabel{font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--gold);min-width:6.5rem;}
