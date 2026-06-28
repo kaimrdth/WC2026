@@ -4156,10 +4156,18 @@ const CSS = `
 @property --chalk{syntax:"<color>";inherits:true;initial-value:#F4F1E8;}
 @property --chalk-dim{syntax:"<color>";inherits:true;initial-value:#A8ADB7;}
 .wc-app{
-  --pitch:#14161A;--pitch-deep:#0E1013;--pitch-card:#1D2026;--pitch-line:rgba(244,241,232,.12);
+  --pitch:#181C25;--pitch-deep:#11141B;--pitch-card:#222734;--pitch-line:rgba(236,240,248,.12);
   --chalk:#F4F1E8;--chalk-dim:#A8ADB7;--gold:#D7A33D;--gold-soft:rgba(215,163,61,.15);
   --green-win:#22543D;--red-loss:rgba(220,53,69,.10);
-  font-family:'Space Grotesk',sans-serif;background:var(--pitch);color:var(--chalk);
+  font-family:'Space Grotesk',sans-serif;color:var(--chalk);
+  /* Cooler, slightly lighter base with a faint red/green/blue ambient — the Trionda host
+     colours bleeding in at the edges instead of the old gold-on-near-black. */
+  background:
+    radial-gradient(72% 55% at 8% -6%, rgba(77,139,255,.10), transparent 60%),
+    radial-gradient(62% 50% at 94% 3%, rgba(255,107,107,.08), transparent 60%),
+    radial-gradient(78% 62% at 50% 110%, rgba(46,192,106,.07), transparent 58%),
+    var(--pitch);
+  background-attachment:fixed;
   min-height:100vh;padding:1.5rem 1rem 3rem;box-sizing:border-box;
   transition:--pitch .7s ease,--pitch-deep .7s ease,--pitch-card .7s ease,--pitch-line .7s ease,--gold .7s ease,--gold-soft .7s ease,--chalk .7s ease,--chalk-dim .7s ease;
 }
@@ -4172,9 +4180,18 @@ const CSS = `
 .wc-hero-top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:1rem;}
 .wc-hero-kicker{font-size:.68rem;letter-spacing:.14em;color:var(--gold);font-weight:600;}
 .wc-hero-title{font-family:'Anton',sans-serif;font-size:clamp(1.8rem,4vw,3rem);margin:.15rem 0;line-height:1;text-transform:uppercase;}
-.wc-hero-title-btn{display:block;background:none;border:none;color:var(--chalk);padding:0;text-align:left;letter-spacing:0;font:inherit;text-transform:inherit;line-height:inherit;}
-.wc-hero-title-btn:hover{color:var(--chalk);}
-.wc-hero-title-btn:focus-visible{outline:2px solid var(--gold);outline-offset:4px;border-radius:4px;}
+/* Trionda ode: a white wordmark with red/green/blue waves drifting across it — a nod to
+   the official ball's three host-nation waves. */
+.wc-hero-title-btn{display:block;background:none;border:none;padding:0;text-align:left;letter-spacing:0;font:inherit;text-transform:inherit;line-height:inherit;
+  background-image:linear-gradient(100deg,
+    #fff 0%,#fff 13%, #ff6b6b 21%,#fff 30%,#fff 45%, #2ec06a 53%,#fff 62%,#fff 77%, #4d8bff 85%,#fff 94%,#fff 100%);
+  background-size:200% 100%;
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;color:transparent;
+  animation:wc-trionda 9s linear infinite;}
+@keyframes wc-trionda{to{background-position:-200% 0;}}
+.wc-hero-title-btn:focus-visible{outline:2px solid var(--chalk);outline-offset:4px;border-radius:4px;}
+@media(prefers-reduced-motion:reduce){.wc-hero-title-btn{animation:none;background:none;-webkit-text-fill-color:#fff;color:#fff;}}
 .wc-hero-sub{color:var(--chalk-dim);font-size:.82rem;}
 .wc-btn-ghost-sm{display:inline-flex;align-items:center;gap:.35rem;background:transparent;color:var(--chalk-dim);border:1px solid var(--pitch-line);border-radius:999px;padding:.4rem .85rem;font-size:.78rem;font-weight:600;}
 .wc-btn-ghost-sm:hover{color:var(--chalk);border-color:var(--chalk-dim);}
