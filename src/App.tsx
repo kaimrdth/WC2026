@@ -482,6 +482,7 @@ interface LiveData {
   matchesPlayed: number;
   eventIds: Record<string, string>; // fixtureId → ESPN event id (for the detail view)
   liveGames: LiveGame[];
+  koTeams: Record<string, { homeCode:string; awayCode:string }>; // KO fixtures whose teams ESPN has set (the real draw), even before kickoff
 }
 
 function goalKind(typeText:string, ownGoal:boolean, penalty:boolean):GoalKind {
@@ -538,6 +539,7 @@ async function fetchLiveData(): Promise<LiveData> {
   const cards: CardEvent[] = [];
   const eventIds: Record<string, string> = {};
   const liveGames: LiveGame[] = [];
+  const koTeams: Record<string, { homeCode:string; awayCode:string }> = {};
   const usedKoFixtures = new Set<string>();
   let matchesPlayed = 0;
   for (const ev of (data.events ?? []) as any[]) {
@@ -553,6 +555,10 @@ async function fetchLiveData(): Promise<LiveData> {
     const fixture = groupFixture ?? koFixture;
     if (!fixture) continue;
     if (koFixture) usedKoFixtures.add(koFixture.id);
+    // Once ESPN has set a knockout fixture's actual teams (the real draw), record them so
+    // the bracket shows the true matchup instead of our standings projection — even while
+    // the game is still scheduled. Guard to real team codes so TBD placeholders don't stick.
+    if (koFixture && TEAM_BY_CODE[hc] && TEAM_BY_CODE[ac]) koTeams[koFixture.id] = { homeCode: hc, awayCode: ac };
     const hg = parseInt(home.score, 10), ag = parseInt(away.score, 10);
     // orient ESPN's home/away to the fixture's home/away
     const orient = (h: number, a: number) =>
@@ -600,7 +606,7 @@ async function fetchLiveData(): Promise<LiveData> {
       }
     }
   }
-  return { results, koResults, goals, cards, matchesPlayed, eventIds, liveGames };
+  return { results, koResults, goals, cards, matchesPlayed, eventIds, liveGames, koTeams };
 }
 
 // Fixtures whose real kickoff window overlaps `now` — used to decide when to poll
@@ -1000,14 +1006,17 @@ function resolveKoSlot(slot:string, standings:Record<string,StandingRow[]>, koRe
 }
 
 interface ResolvedKo { fixture:KoFixture; home:KoSide; away:KoSide; }
-function resolveKnockout(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>={}):ResolvedKo[] {
+function resolveKnockout(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>={}, koTeams:Record<string,{homeCode:string;awayCode:string}>={}):ResolvedKo[] {
   const standings:Record<string,StandingRow[]>={};
   for(const L of GROUP_LETTERS) standings[L]=computeStandings(L,groupResults);
   return KO_FIXTURES.map(f=>{
+    // Prefer a played result (carries the score), then ESPN's set draw (real teams, not yet
+    // played), then our standings projection for fixtures whose teams aren't decided yet.
     const result=koResults[f.id];
-    return result
-      ? { fixture:f, home:teamSide(result.homeCode,shortSlot(f.homeSlot)), away:teamSide(result.awayCode,shortSlot(f.awaySlot)) }
-      : { fixture:f, home:resolveKoSlot(f.homeSlot,standings,koResults), away:resolveKoSlot(f.awaySlot,standings,koResults) };
+    if(result) return { fixture:f, home:teamSide(result.homeCode,shortSlot(f.homeSlot)), away:teamSide(result.awayCode,shortSlot(f.awaySlot)) };
+    const set=koTeams[f.id];
+    if(set) return { fixture:f, home:teamSide(set.homeCode,shortSlot(f.homeSlot)), away:teamSide(set.awayCode,shortSlot(f.awaySlot)) };
+    return { fixture:f, home:resolveKoSlot(f.homeSlot,standings,koResults), away:resolveKoSlot(f.awaySlot,standings,koResults) };
   });
 }
 
@@ -2088,13 +2097,13 @@ function KoScheduleView({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSel
   );
 }
 
-function KnockoutView({groupResults,koResults,goalsByFixture,liveByFixture,detailIds,onOpenDetail,onSelectTeam,onPreviewKo}:{
-  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;goalsByFixture:Record<string,GoalEvent[]>;
+function KnockoutView({groupResults,koResults,koTeams,goalsByFixture,liveByFixture,detailIds,onOpenDetail,onSelectTeam,onPreviewKo}:{
+  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;koTeams:Record<string,{homeCode:string;awayCode:string}>;goalsByFixture:Record<string,GoalEvent[]>;
   liveByFixture:Record<string,LiveGame>;detailIds:Set<string>;onOpenDetail:(id:string)=>void;
   onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
   const [view,setView]=useState<"bracket"|"schedule">("bracket");
-  const ko=useMemo(()=>resolveKnockout(groupResults,koResults),[groupResults,koResults]);
+  const ko=useMemo(()=>resolveKnockout(groupResults,koResults,koTeams),[groupResults,koResults,koTeams]);
   return (
     <>
       <div className="wc-groups-bar">
@@ -2118,8 +2127,8 @@ function KnockoutView({groupResults,koResults,goalsByFixture,liveByFixture,detai
 
 
 
-function TeamsView({groupResults,koResults,liveByFixture,liveGoals,qualifiers,confirmedLineups,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onPreviewKo,onPreviewGroup,onTheme,focusTeam}:{
-  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;liveByFixture:Record<string,LiveGame>;liveGoals:GoalEvent[];
+function TeamsView({groupResults,koResults,koTeams,liveByFixture,liveGoals,qualifiers,confirmedLineups,detailIds,onOpenDetail,onSelectTeam,onSelectGroup,onPreviewKo,onPreviewGroup,onTheme,focusTeam}:{
+  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;koTeams:Record<string,{homeCode:string;awayCode:string}>;liveByFixture:Record<string,LiveGame>;liveGoals:GoalEvent[];
   qualifiers:ReturnType<typeof computeQualifiers>|null;
   confirmedLineups:Record<string,ConfirmedXI>;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
@@ -2127,7 +2136,7 @@ function TeamsView({groupResults,koResults,liveByFixture,liveGoals,qualifiers,co
   onTheme:(code:string|null)=>void;
   focusTeam:{code:string;k:number}|null;
 }) {
-  const ko=useMemo(()=>resolveKnockout(groupResults,koResults),[groupResults,koResults]);
+  const ko=useMemo(()=>resolveKnockout(groupResults,koResults,koTeams),[groupResults,koResults,koTeams]);
   const [search,setSearch]=useState("");
   const [confed,setConfed]=useState("all");
   const [group,setGroup]=useState("all");
@@ -2814,12 +2823,12 @@ const longDate=(iso:string|number)=>new Date(iso).toLocaleDateString(undefined,{
 // Builds the plain-text tournament state the model narrates from. Picks the focus
 // automatically: today's games if there are any (live, done, or upcoming); otherwise
 // the most recent matchday's results plus the next fixtures to come.
-function buildDigestFacts(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>, liveGames:LiveGame[]):string {
+function buildDigestFacts(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>, liveGames:LiveGame[], koTeams:Record<string,{homeCode:string;awayCode:string}>={}):string {
   const nm=(c:string)=>TEAM_BY_CODE[c]?.name??c;
   const now=Date.now();
   const today=localDayKey(new Date());
   const liveIds=new Set(liveGames.map(g=>g.fixtureId));
-  const koById=Object.fromEntries(resolveKnockout(groupResults,koResults).map(m=>[m.fixture.id,m]));
+  const koById=Object.fromEntries(resolveKnockout(groupResults,koResults,koTeams).map(m=>[m.fixture.id,m]));
   const allMatches=[...ALL_GROUP_MATCHES,...KO_FIXTURES];
   const ms=(f:Fixture|KoFixture)=>new Date(f.kickoff).getTime();
   const resultFor=(f:Fixture|KoFixture)=>"group" in f ? groupResults[f.id] : koResults[f.id];
@@ -3096,12 +3105,12 @@ function MicroDigest({facts,cacheKey,fallback,tone="team",onSelectTeam,onSelectG
 // Non-AI fallback: a plain-language summary built entirely client-side from the same
 // data, so the digest panel always shows something even if the AI backend is down,
 // rate-limited, or unconfigured. Reads mechanically, but never blank.
-function fallbackDigest(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>, liveGames:LiveGame[]):string{
+function fallbackDigest(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>, liveGames:LiveGame[], koTeams:Record<string,{homeCode:string;awayCode:string}>={}):string{
   const nm=(c:string)=>TEAM_BY_CODE[c]?.name??c;
   const now=Date.now();
   const today=localDayKey(new Date());
   const liveIds=new Set(liveGames.map(g=>g.fixtureId));
-  const koById=Object.fromEntries(resolveKnockout(groupResults,koResults).map(m=>[m.fixture.id,m]));
+  const koById=Object.fromEntries(resolveKnockout(groupResults,koResults,koTeams).map(m=>[m.fixture.id,m]));
   const allMatches=[...ALL_GROUP_MATCHES,...KO_FIXTURES];
   const ms=(f:Fixture|KoFixture)=>new Date(f.kickoff).getTime();
   const resultFor=(f:Fixture|KoFixture)=>"group" in f ? groupResults[f.id] : koResults[f.id];
@@ -3257,8 +3266,8 @@ function Typewriter({text,onSelectTeam,onSelectGroup,onMatch,hasMatch,speed=16,a
   return <>{text.slice(0,n)}<span className="wc-caret"/></>;
 }
 
-function DigestPanel({groupResults,koResults,liveGames,matchesPlayed,detailIds,onSelectTeam,onSelectGroup,onOpenPreview,onOpenDetail,onPreviewKo}:{
-  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;liveGames:LiveGame[];matchesPlayed:number;detailIds:Set<string>;
+function DigestPanel({groupResults,koResults,koTeams,liveGames,matchesPlayed,detailIds,onSelectTeam,onSelectGroup,onOpenPreview,onOpenDetail,onPreviewKo}:{
+  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;koTeams:Record<string,{homeCode:string;awayCode:string}>;liveGames:LiveGame[];matchesPlayed:number;detailIds:Set<string>;
   onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
   onOpenPreview:(id:string)=>void;onOpenDetail:(id:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
@@ -3266,9 +3275,9 @@ function DigestPanel({groupResults,koResults,liveGames,matchesPlayed,detailIds,o
   const [text,setText]=useState("");
   const [status,setStatus]=useState<"idle"|"loading"|"error">("idle");
   const [err,setErr]=useState("");
-  const facts=useMemo(()=>buildDigestFacts(groupResults,koResults,liveGames),[groupResults,koResults,liveGames]);
+  const facts=useMemo(()=>buildDigestFacts(groupResults,koResults,liveGames,koTeams),[groupResults,koResults,liveGames,koTeams]);
   // Match-link wiring: a referenced matchup opens its preview (upcoming) or details (played/live).
-  const koMatchups=useMemo(()=>resolveKnockout(groupResults,koResults),[groupResults,koResults]);
+  const koMatchups=useMemo(()=>resolveKnockout(groupResults,koResults,koTeams),[groupResults,koResults,koTeams]);
   const koMatchOf=useCallback((a:string,b:string)=>koMatchups.find(m=>{const c=[m.home.team?.code,m.away.team?.code];return c.includes(a)&&c.includes(b);})??null,[koMatchups]);
   const hasMatch=useCallback((a:string,b:string)=>!!FIXTURE_BY_PAIR[pairKey(a,b)]||!!koMatchOf(a,b),[koMatchOf]);
   const onMatch=useCallback((a:string,b:string)=>{
@@ -3277,7 +3286,7 @@ function DigestPanel({groupResults,koResults,liveGames,matchesPlayed,detailIds,o
     const m=koMatchOf(a,b);
     if(m){ (koResults[m.fixture.id]||detailIds.has(m.fixture.id))?onOpenDetail(m.fixture.id):onPreviewKo(a,b,m.fixture); }
   },[groupResults,koResults,detailIds,koMatchOf,onOpenDetail,onOpenPreview,onPreviewKo]);
-  const fallback=useMemo(()=>fallbackDigest(groupResults,koResults,liveGames),[groupResults,koResults,liveGames]);
+  const fallback=useMemo(()=>fallbackDigest(groupResults,koResults,liveGames,koTeams),[groupResults,koResults,liveGames,koTeams]);
   // Regenerate on goals / full-time / new kickoffs, not on every clock tick.
   const sig=useMemo(()=>digestSignature(groupResults,koResults,liveGames),[groupResults,koResults,liveGames]);
   const pendingRef=useRef(false); // guard against overlapping requests
@@ -3494,6 +3503,7 @@ export default function App() {
   const loadStore=<T,>(k:string):T=>{ try{ return JSON.parse(localStorage.getItem(k)||"{}"); }catch{ return {} as T; } };
   const [groupResults,setGroupResults]=useState<Record<string,ScoreResult>>(()=>loadStore("wc26_results"));
   const [koResults,setKoResults]=useState<Record<string,KoResult>>(()=>loadStore("wc26_koresults"));
+  const [koTeams,setKoTeams]=useState<Record<string,{homeCode:string;awayCode:string}>>(()=>loadStore("wc26_koteams"));
   const [liveStatus,setLiveStatus]=useState<"loading"|"ok"|"error">("loading");
   const [liveGoals,setLiveGoals]=useState<GoalEvent[]>([]);
   const [liveCards,setLiveCards]=useState<CardEvent[]>([]);
@@ -3568,6 +3578,7 @@ export default function App() {
             // when ESPN's response window no longer includes older fixtures.
             setGroupResults(prev=>{ const next={...prev,...live.results}; save("wc26_results",next); return next; });
             setKoResults(prev=>{ const next={...prev,...live.koResults}; save("wc26_koresults",next); return next; });
+            setKoTeams(prev=>{ const next={...prev,...live.koTeams}; save("wc26_koteams",next); return next; });
             setLiveEventIds(prev=>{ const next={...prev,...live.eventIds}; save("wc26_eventids",next); return next; });
             setLiveGoals(live.goals);
             setLiveCards(live.cards);
@@ -3682,7 +3693,7 @@ export default function App() {
         </div>
       </header>
 
-      {DIGEST_ENABLED&&<DigestPanel groupResults={groupResults} koResults={koResults} liveGames={liveGames} matchesPlayed={liveMatchesPlayed} detailIds={detailIds}
+      {DIGEST_ENABLED&&<DigestPanel groupResults={groupResults} koResults={koResults} koTeams={koTeams} liveGames={liveGames} matchesPlayed={liveMatchesPlayed} detailIds={detailIds}
         onSelectTeam={goToTeam} onSelectGroup={goToGroup}
         onOpenPreview={setPreviewId} onOpenDetail={setDetailId} onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})}/>}
 
@@ -3722,7 +3733,7 @@ export default function App() {
           <StatsView goals={liveGoals} cards={liveCards} matchesPlayed={liveMatchesPlayed} onSelectTeam={goToTeam}/>
         )}
         {stage==="teams"&&(
-          <TeamsView groupResults={groupResults} koResults={koResults} liveByFixture={liveByFixture}
+          <TeamsView groupResults={groupResults} koResults={koResults} koTeams={koTeams} liveByFixture={liveByFixture}
             liveGoals={liveGoals} qualifiers={qualifiers} confirmedLineups={confirmedLineups}
             detailIds={detailIds} onOpenDetail={setDetailId} onSelectTeam={goToTeam} onSelectGroup={goToGroup}
             onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})}
@@ -3730,7 +3741,7 @@ export default function App() {
             onTheme={setThemeCode} focusTeam={focusTeam}/>
         )}
         {stage==="knockout"&&(
-          <KnockoutView groupResults={groupResults} koResults={koResults}
+          <KnockoutView groupResults={groupResults} koResults={koResults} koTeams={koTeams}
             goalsByFixture={goalsByFixture} liveByFixture={liveByFixture} detailIds={detailIds} onOpenDetail={setDetailId}
             onSelectTeam={goToTeam} onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})}/>
         )}
