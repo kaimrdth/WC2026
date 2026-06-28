@@ -833,11 +833,30 @@ function detailTeamToXI(r:DetailTeam):Player[]{
 }
 
 // Fetch the published rosters for one event (only teams that already have a posted XI).
-async function fetchEventLineups(eventId:string):Promise<DetailTeam[]>{
+// Per-team boxscore stats we aggregate tournament-wide on the stats page. possessionPct is
+// a whole number; pass accuracy is derived from accurate/total (ESPN's passPct is a ratio).
+const AGG_STAT_KEYS=["possessionPct","totalShots","shotsOnTarget","wonCorners","foulsCommitted","totalPasses","accuratePasses","totalTackles","interceptions","totalClearance"];
+function extractAggStats(box:any):Record<string,number>{
+  const out:Record<string,number>={};
+  for(const st of (box?.statistics??[])) if(AGG_STAT_KEYS.includes(st.name)) out[st.name]=statNum(st.displayValue);
+  return out;
+}
+// One completed match's two teams' stats, keyed for tournament aggregation.
+interface EventStat { home:{code:string;v:Record<string,number>}; away:{code:string;v:Record<string,number>}; }
+interface EventSummary { rosters:DetailTeam[]; completed:boolean; stat:EventStat|null; }
+async function fetchEventSummary(eventId:string):Promise<EventSummary>{
   const resp=await fetch(SUMMARY_URL(eventId));
   if(!resp.ok) throw new Error(`ESPN responded ${resp.status}`);
   const s=await resp.json();
-  return ((s.rosters ?? []) as any[]).map(parseRoster).filter(r=>r.starters.length>=11);
+  const rosters=((s.rosters ?? []) as any[]).map(parseRoster).filter(r=>r.starters.length>=11);
+  const completed=!!s.header?.competitions?.[0]?.status?.type?.completed;
+  const box=s.boxscore?.teams ?? [];
+  const bh=box.find((t:any)=>t.homeAway==="home"), ba=box.find((t:any)=>t.homeAway==="away");
+  const hc=bh?.team?.abbreviation, ac=ba?.team?.abbreviation;
+  // Only record stats from finished matches with two real teams (skip live/partial totals).
+  const stat:EventStat|null=(completed&&hc&&ac&&TEAM_BY_CODE[hc]&&TEAM_BY_CODE[ac])
+    ? { home:{code:hc,v:extractAggStats(bh)}, away:{code:ac,v:extractAggStats(ba)} } : null;
+  return { rosters, completed, stat };
 }
 
 // Standings are computed from completed results. Optionally folds in *in-progress*
@@ -2579,8 +2598,8 @@ function KoPreviewModal({matchup,groupResults,confirmedLineups,onClose,onSelectT
   );
 }
 
-function StatsView({goals,cards,matchesPlayed,onSelectTeam}:{
-  goals:GoalEvent[];cards:CardEvent[];matchesPlayed:number;
+function StatsView({goals,cards,matchesPlayed,matchStats,onSelectTeam}:{
+  goals:GoalEvent[];cards:CardEvent[];matchesPlayed:number;matchStats:Record<string,EventStat>;
   onSelectTeam:(code:string)=>void;
 }) {
   const scorers=useMemo(()=>{
@@ -2621,6 +2640,43 @@ function StatsView({goals,cards,matchesPlayed,onSelectTeam}:{
   const reds=cards.filter(c=>c.red).length;
   const maxScorer=scorers[0]?.goals??1;
   const maxTeam=teamGoals[0]?.n??1;
+
+  // Tournament-wide team stats, summed from each completed match's boxscore.
+  const teamAgg=useMemo(()=>{
+    const m=new Map<string,Record<string,number>>();
+    const add=(code:string,v:Record<string,number>)=>{
+      const e=m.get(code)??{matches:0};
+      e.matches=(e.matches??0)+1;
+      for(const k of AGG_STAT_KEYS) e[k]=(e[k]??0)+(v[k]??0);
+      m.set(code,e);
+    };
+    for(const ev of Object.values(matchStats)){ add(ev.home.code,ev.home.v); add(ev.away.code,ev.away.v); }
+    return m;
+  },[matchStats]);
+  const hasTeamStats=teamAgg.size>0;
+  const board=(valueFn:(e:Record<string,number>)=>number)=>[...teamAgg.entries()]
+    .map(([code,e])=>({code,val:valueFn(e)})).filter(x=>Number.isFinite(x.val)).sort((a,b)=>b.val-a.val);
+  const passAccOf=(e:Record<string,number>)=>e.totalPasses?(e.accuratePasses/e.totalPasses)*100:0;
+  const statSections:{title:string;boards:{label:string;rows:{code:string;val:number}[];pct?:boolean}[]}[]=[
+    {title:"Attacking",boards:[
+      {label:"Shots",rows:board(e=>e.totalShots)},
+      {label:"Shots on target",rows:board(e=>e.shotsOnTarget)},
+      {label:"Possession %",rows:board(e=>e.matches?e.possessionPct/e.matches:0),pct:true},
+    ]},
+    {title:"Passing & control",boards:[
+      {label:"Pass accuracy",rows:board(passAccOf),pct:true},
+      {label:"Total passes",rows:board(e=>e.totalPasses)},
+    ]},
+    {title:"Defensive & set pieces",boards:[
+      {label:"Tackles",rows:board(e=>e.totalTackles)},
+      {label:"Interceptions",rows:board(e=>e.interceptions)},
+      {label:"Clearances",rows:board(e=>e.totalClearance)},
+      {label:"Corners",rows:board(e=>e.wonCorners)},
+    ]},
+    {title:"Discipline",boards:[
+      {label:"Fouls",rows:board(e=>e.foulsCommitted)},
+    ]},
+  ];
 
   if(matchesPlayed===0){
     return (
@@ -2730,7 +2786,43 @@ function StatsView({goals,cards,matchesPlayed,onSelectTeam}:{
           )}
         </section>
       </div>
-      <p className="wc-stats-note">Stats reflect the {matchesPlayed} completed tournament match{matchesPlayed===1?"":"es"} loaded from the live feed. Assists aren’t available in the feed, so they’re omitted.</p>
+
+      {hasTeamStats&&(
+        <div className="wc-teamstats">
+          <h3 className="wc-stats-h"><BarChart3 size={15}/> Team stats</h3>
+          {statSections.map(sec=>(
+            <div className="wc-teamstats-sec" key={sec.title}>
+              <div className="wc-teamstats-sec-title">{sec.title}</div>
+              <div className="wc-board-grid">
+                {sec.boards.map(b=>{
+                  const max=b.rows[0]?.val||1;
+                  return (
+                    <div className="wc-board" key={b.label}>
+                      <div className="wc-board-title">{b.label}</div>
+                      {b.rows.slice(0,5).map((r,i)=>(
+                        <div className="wc-board-row" key={r.code}>
+                          <span className="wc-board-rank">{i+1}</span>
+                          <div className="wc-board-mid">
+                            <div className="wc-board-top">
+                              <button className="wc-board-team" onClick={()=>onSelectTeam(r.code)} title={TEAM_BY_CODE[r.code]?.name}>
+                                <Flag code={r.code} className="wc-flag-sm"/><span className="wc-board-name">{TEAM_BY_CODE[r.code]?.name??r.code}</span>
+                              </button>
+                              <span className="wc-board-val">{Math.round(r.val)}{b.pct?"%":""}</span>
+                            </div>
+                            <div className="wc-board-bar"><div className="wc-board-bar-fill" style={{width:`${(r.val/max)*100}%`}}/></div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="wc-stats-note">Goal/card stats reflect the {matchesPlayed} completed match{matchesPlayed===1?"":"es"} from the live feed; assists aren’t in the feed, so they’re omitted. Team stats are aggregated from the boxscore of each finished match{hasTeamStats?` (${Object.keys(matchStats).length} so far)`:""}.</p>
     </div>
   );
 }
@@ -3525,6 +3617,12 @@ export default function App() {
   const fetchedEventsRef=useRef<Set<string>>(new Set(
     (()=>{ try{ return JSON.parse(localStorage.getItem("wc26_lineup_events") || "[]"); }catch{ return []; } })()
   ));
+  // Per-match boxscore stats (one entry per completed match), aggregated tournament-wide on
+  // the stats page. Persisted so totals survive reloads and each match is only counted once.
+  const [matchStats,setMatchStats]=useState<Record<string,EventStat>>(()=>{
+    try{ return JSON.parse(localStorage.getItem("wc26_matchstats") || "{}"); }catch{ return {}; }
+  });
+  const statsDoneRef=useRef<Set<string>>(new Set(Object.keys(matchStats)));
 
   // The app's color scheme shifts to the active team's colours, reverting to the
   // default green/gold when you leave the Teams view.
@@ -3613,22 +3711,28 @@ export default function App() {
   useEffect(()=>{
     let alive=true;
     (async()=>{
-      const todo=Object.entries(lineupEvents).filter(([,{eventId}])=>!fetchedEventsRef.current.has(eventId));
+      // Refetch an event until we have BOTH its lineups and (once it's finished) its final
+      // stats — so a match first seen live still gets its full-time boxscore aggregated.
+      const todo=Object.entries(lineupEvents).filter(([,{eventId}])=>!fetchedEventsRef.current.has(eventId)||!statsDoneRef.current.has(eventId));
       const CONCURRENCY=5;
       for(let i=0;i<todo.length&&alive;i+=CONCURRENCY){
         const batch=todo.slice(i,i+CONCURRENCY);
         const results=await Promise.all(batch.map(async([fid,{eventId,kickoffMs}])=>{
-          try{ const rosters=await fetchEventLineups(eventId); return rosters.length?{fid,eventId,kickoffMs,rosters}:null; }
-          catch{ return null; /* no lineup yet — retry on a later poll */ }
+          try{ const sum=await fetchEventSummary(eventId); return {fid,eventId,kickoffMs,...sum}; }
+          catch{ return null; /* no data yet — retry on a later poll */ }
         }));
         if(!alive) break;
         const got=results.filter((r):r is NonNullable<typeof r>=>!!r);
         if(!got.length) continue;
-        for(const g of got) fetchedEventsRef.current.add(g.eventId);
+        for(const g of got){
+          if(g.rosters.length) fetchedEventsRef.current.add(g.eventId); // lineups captured
+          if(g.completed) statsDoneRef.current.add(g.eventId);          // final → stop refetching
+        }
         try{ localStorage.setItem("wc26_lineup_events",JSON.stringify([...fetchedEventsRef.current])); }catch{/* quota */}
-        setConfirmedLineups(prev=>{
+        const withRosters=got.filter(g=>g.rosters.length);
+        if(withRosters.length) setConfirmedLineups(prev=>{
           const next={...prev};
-          for(const {fid,kickoffMs,rosters} of got){
+          for(const {fid,kickoffMs,rosters} of withRosters){
             for(const r of rosters){
               const existing=next[r.code];
               if(!existing || kickoffMs>=existing.kickoffMs){
@@ -3637,6 +3741,13 @@ export default function App() {
             }
           }
           try{ localStorage.setItem("wc26_lineups",JSON.stringify(next)); }catch{/* quota */}
+          return next;
+        });
+        const withStats=got.filter(g=>g.stat);
+        if(withStats.length) setMatchStats(prev=>{
+          const next={...prev};
+          for(const g of withStats) next[g.eventId]=g.stat!;
+          try{ localStorage.setItem("wc26_matchstats",JSON.stringify(next)); }catch{/* quota */}
           return next;
         });
       }
@@ -3730,7 +3841,7 @@ export default function App() {
         )}
         {stage==="thirds"&&<ThirdPlaceTableView groupResults={groupResults} liveByFixture={liveByFixture} onSelectTeam={goToTeam}/>}
         {stage==="stats"&&(
-          <StatsView goals={liveGoals} cards={liveCards} matchesPlayed={liveMatchesPlayed} onSelectTeam={goToTeam}/>
+          <StatsView goals={liveGoals} cards={liveCards} matchesPlayed={liveMatchesPlayed} matchStats={matchStats} onSelectTeam={goToTeam}/>
         )}
         {stage==="teams"&&(
           <TeamsView groupResults={groupResults} koResults={koResults} koTeams={koTeams} liveByFixture={liveByFixture}
@@ -4360,7 +4471,27 @@ const CSS = `
 .wc-card-y,.wc-card-r{font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;border-radius:3px;padding:.05rem .3rem;color:#1a1a1a;}
 .wc-card-y{background:#E7C200;}
 .wc-card-r{background:#D03A22;color:#fff;}
-.wc-stats-note{font-size:.7rem;color:var(--chalk-dim);}
+/* Tournament-wide team-stat leaderboards (from match boxscores). */
+.wc-teamstats{margin-top:1.2rem;}
+.wc-teamstats-sec{margin-top:1rem;}
+.wc-teamstats-sec-title{font-size:.62rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);margin-bottom:.5rem;}
+.wc-board-grid{display:grid;grid-template-columns:1fr;gap:.8rem;}
+@media(min-width:620px){.wc-board-grid{grid-template-columns:1fr 1fr;}}
+@media(min-width:980px){.wc-board-grid{grid-template-columns:1fr 1fr 1fr;}}
+.wc-board{background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:12px;padding:.8rem .9rem;}
+.wc-board-title{font-size:.74rem;font-weight:700;color:var(--chalk);margin-bottom:.55rem;}
+.wc-board-row{display:grid;grid-template-columns:1rem minmax(0,1fr);align-items:center;gap:.45rem;margin-bottom:.5rem;}
+.wc-board-row:last-child{margin-bottom:0;}
+.wc-board-rank{font-size:.62rem;color:var(--chalk-dim);text-align:center;font-variant-numeric:tabular-nums;}
+.wc-board-mid{min-width:0;display:flex;flex-direction:column;gap:.2rem;}
+.wc-board-top{display:flex;align-items:center;gap:.4rem;}
+.wc-board-team{display:inline-flex;align-items:center;gap:.35rem;background:none;border:none;padding:0;font:inherit;color:var(--chalk);cursor:pointer;min-width:0;}
+.wc-board-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.72rem;}
+.wc-board-team:hover .wc-board-name{color:var(--gold);}
+.wc-board-val{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:700;color:var(--chalk);font-variant-numeric:tabular-nums;}
+.wc-board-bar{height:.32rem;background:var(--pitch-deep);border-radius:99px;overflow:hidden;}
+.wc-board-bar-fill{height:100%;background:var(--gold);border-radius:99px;}
+.wc-stats-note{font-size:.7rem;color:var(--chalk-dim);margin-top:1.2rem;}
 
 /* match detail modal */
 .wc-match-detail-btn{display:block;width:100%;margin-top:.6rem;padding:.4rem;background:transparent;border:1px solid var(--pitch-line);border-radius:8px;color:var(--chalk-dim);font-size:.7rem;font-weight:700;letter-spacing:.03em;}
