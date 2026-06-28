@@ -2207,7 +2207,6 @@ function DetailPitch({team,stats}:{team:DetailTeam;stats:Record<string,PlayerSta
     ? lines.map(size=>{const r=ordered.slice(idx,idx+size).sort((a,b)=>posSide(a.pos)-posSide(b.pos));idx+=size;return r;})
     : [team.starters];
   const numRows=rows.length;
-  const benchOn=team.bench.filter(b=>b.on);
   return (
     <div className="wc-detail-pitch-card" style={pitchAccentStyle(team.code)}>
       <div className="wc-detail-pitch-head">
@@ -2229,13 +2228,23 @@ function DetailPitch({team,stats}:{team:DetailTeam;stats:Record<string,PlayerSta
           </div>;
         })}
       </div>
-      {benchOn.length>0&&(
-        <div className="wc-detail-subs">
-          <span className="wc-detail-subs-label">Subs on</span>
-          {benchOn.map((b,i)=>{
-            const s=stats[b.name];
-            return <span className="wc-sub-on" key={i}>{surname(b.name)}{s&&s.goals>0&&<span className="wc-pb"> <BallIcon size={10}/>{s.goals>1&&<b>{s.goals}</b>}</span>}{i<benchOn.length-1?", ":""}</span>;
-          })}
+      {team.bench.length>0&&(
+        <div className="wc-detail-subs wc-detail-bench">
+          <span className="wc-detail-subs-label">Bench</span>
+          <div className="wc-bench-list">
+            {team.bench.map((b,i)=>{
+              const s=stats[b.name];
+              return (
+                <span className={`wc-bench-item${b.on?" wc-bench-on":""}`} key={i}>
+                  {b.jersey&&<span className="wc-bench-num">{b.jersey}</span>}
+                  <span className="wc-bench-name">{surname(b.name)}</span>
+                  {b.on&&<ArrowUp size={10} className="wc-pb-on" aria-label="Subbed on"/>}
+                  {s&&s.goals>0&&<span className="wc-pb"><BallIcon size={10}/>{s.goals>1&&<b>{s.goals}</b>}</span>}
+                  {s?.red?<span className="wc-pb"><CardIcon red/></span>:s?.yellow&&<span className="wc-pb"><CardIcon/></span>}
+                </span>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -4360,6 +4369,12 @@ const CSS = `
 .wc-pb-on{color:#5fcf8e;display:inline-flex;}
 .wc-detail-subs{font-size:.66rem;color:var(--chalk-dim);line-height:1.6;}
 .wc-sub-on{color:var(--chalk);}
+.wc-detail-bench{margin-top:.55rem;padding-top:.55rem;border-top:1px solid var(--pitch-line);}
+.wc-bench-list{display:flex;flex-wrap:wrap;gap:.3rem .7rem;margin-top:.3rem;}
+.wc-bench-item{display:inline-flex;align-items:center;gap:.28rem;font-size:.68rem;color:var(--chalk-dim);}
+.wc-bench-on{color:var(--chalk);}
+.wc-bench-num{font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--chalk-dim);opacity:.6;min-width:.9rem;text-align:right;}
+.wc-bench-on .wc-bench-num{opacity:1;color:var(--gold);}
 .wc-detail-live-tag{display:inline-flex;align-items:center;gap:.3rem;font-size:.58rem;font-weight:800;letter-spacing:.05em;color:#ff8a8a;}
 .wc-detail-score-num-live{color:#ff6b6b;}
 
