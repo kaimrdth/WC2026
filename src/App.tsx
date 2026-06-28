@@ -2889,7 +2889,7 @@ function MicroDigest({facts,cacheKey,fallback,tone="team",onSelectTeam,onSelectG
   facts:string;cacheKey:string;fallback:string;tone?:MicroDigestTone;
   onSelectTeam?:(code:string)=>void;onSelectGroup?:(letter:string)=>void;
 }) {
-  const {min}=useDigestMin();
+  const {min,toggle}=useDigestMin();
   const [revealed,setRevealed]=useState(false); // per-card override while globally minimized
   const collapsed = min && !revealed;
   const [text,setText]=useState(fallback);
@@ -2926,9 +2926,9 @@ function MicroDigest({facts,cacheKey,fallback,tone="team",onSelectTeam,onSelectG
   return (
     <div className={`wc-micro wc-micro-${tone}`}>
       <span className="wc-micro-tag"><Sparkles size={12}/> Context{status==="loading"&&<Loader2 className="wc-spin" size={12}/>}
-        {min&&<button type="button" className="wc-micro-hide" onClick={()=>setRevealed(false)} title="Hide context"><ChevronUp size={12}/></button>}
+        <button type="button" className="wc-micro-hide" onClick={min?()=>setRevealed(false):toggle} title={min?"Hide context":"Minimize all digests"} aria-label={min?"Hide context":"Minimize all digests"}><ChevronUp size={12}/></button>
       </span>
-      <p><MicroTypewriter text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/></p>
+      <p><MicroTypewriter text={text} animId={`micro:${cacheKey}`} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/></p>
     </div>
   );
 }
@@ -3054,35 +3054,45 @@ function MicroDigestLinks({text,onSelectTeam,onSelectGroup}:{
   })}</>;
 }
 
-function MicroTypewriter({text,onSelectTeam,onSelectGroup,speed=10}:{
-  text:string;onSelectTeam?:(c:string)=>void;onSelectGroup?:(l:string)=>void;speed?:number;
+// Remembers which digests have already finished typing (keyed by a stable id → the exact
+// text typed). Module-level so it survives a digest unmounting and remounting — e.g. when
+// the user minimizes then maximizes — so we replay the typewriter only for genuinely new
+// text, never just because the panel was hidden and shown again.
+const typedOnce = new Map<string,string>();
+
+function MicroTypewriter({text,onSelectTeam,onSelectGroup,speed=10,animId}:{
+  text:string;onSelectTeam?:(c:string)=>void;onSelectGroup?:(l:string)=>void;speed?:number;animId?:string;
 }){
-  const [n,setN]=useState(0);
+  const seen=animId!=null&&typedOnce.get(animId)===text;
+  const [n,setN]=useState(()=>seen?text.length:0);
   useEffect(()=>{
+    if(animId!=null&&typedOnce.get(animId)===text){ setN(text.length); return; } // already typed this text
     setN(0); if(!text) return;
     let i=0;
     const id=setInterval(()=>{
       i+=3;
       setN(Math.min(i,text.length));
-      if(i>=text.length) clearInterval(id);
+      if(i>=text.length){ clearInterval(id); if(animId!=null) typedOnce.set(animId,text); }
     },speed);
     return ()=>clearInterval(id);
-  },[text,speed]);
+  },[text,speed,animId]);
   if(n>=text.length) return <MicroDigestLinks text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>;
   return <>{text.slice(0,n)}<span className="wc-caret"/></>;
 }
 
 // Types out the digest, then swaps to the linkified version once fully revealed.
-function Typewriter({text,onSelectTeam,onSelectGroup,onMatch,hasMatch,speed=16}:{
+function Typewriter({text,onSelectTeam,onSelectGroup,onMatch,hasMatch,speed=16,animId}:{
   text:string;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
-  onMatch:(a:string,b:string)=>void;hasMatch:(a:string,b:string)=>boolean;speed?:number;
+  onMatch:(a:string,b:string)=>void;hasMatch:(a:string,b:string)=>boolean;speed?:number;animId?:string;
 }){
-  const [n,setN]=useState(0);
+  const seen=animId!=null&&typedOnce.get(animId)===text;
+  const [n,setN]=useState(()=>seen?text.length:0);
   useEffect(()=>{
+    if(animId!=null&&typedOnce.get(animId)===text){ setN(text.length); return; } // already typed this text
     setN(0); if(!text) return;
-    let i=0; const id=setInterval(()=>{ i+=2; setN(Math.min(i,text.length)); if(i>=text.length) clearInterval(id); },speed);
+    let i=0; const id=setInterval(()=>{ i+=2; setN(Math.min(i,text.length)); if(i>=text.length){ clearInterval(id); if(animId!=null) typedOnce.set(animId,text); } },speed);
     return ()=>clearInterval(id);
-  },[text,speed]);
+  },[text,speed,animId]);
   if(n>=text.length) return <DigestLinks text={text} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup} onMatch={onMatch} hasMatch={hasMatch}/>;
   return <>{text.slice(0,n)}<span className="wc-caret"/></>;
 }
@@ -3192,7 +3202,7 @@ function DigestPanel({groupResults,koResults,liveGames,matchesPlayed,detailIds,o
       </div>
       {!min&&<p className="wc-digest-body">
         {text
-          ? <Typewriter key={gen} text={`${timeGreeting()} — ${text}`} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup} onMatch={onMatch} hasMatch={hasMatch}/>
+          ? <Typewriter key={gen} animId="daily-digest" text={`${timeGreeting()} — ${text}`} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup} onMatch={onMatch} hasMatch={hasMatch}/>
           : status==="error"
             ? <span className="wc-digest-err">Couldn’t generate the digest — {err}. <button className="wc-digest-retry" onClick={()=>generate(true)}>Retry</button></span>
             : <span className="wc-digest-loading">Generating today’s briefing…</span>}
@@ -3848,7 +3858,8 @@ const CSS = `
 .wc-micro-collapsed .wc-micro-chev{color:var(--chalk-dim);}
 .wc-micro-collapsed:hover{border-color:rgba(215,163,61,.5);}
 .wc-micro-collapsed:hover .wc-micro-chev{color:var(--gold);}
-.wc-micro-hide{display:inline-flex;align-items:center;background:none;border:none;padding:0;margin-left:.3rem;color:var(--chalk-dim);cursor:pointer;}
+.wc-micro:not(.wc-micro-collapsed)>.wc-micro-tag{display:flex;width:100%;}
+.wc-micro-hide{display:inline-flex;align-items:center;background:none;border:none;padding:0;margin-left:auto;color:var(--chalk-dim);cursor:pointer;}
 .wc-micro-hide:hover{color:var(--gold);}
 
 /* projected-bracket note */
