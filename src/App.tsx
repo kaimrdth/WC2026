@@ -1969,7 +1969,7 @@ function BracketCard({m,result,live,onOpen}:{
   const k=formatKickoff(f.kickoff);
   // Upcoming/TBD matches still have a known date, time and venue — surface them.
   const foot=result?"FT":live?<span className="wc-br2-live"><span className="wc-live-dot"/>{live.clock||"LIVE"}</span>
-    :<span className="wc-br2-when">{k.date}{k.time?<span className="wc-br2-time"> · {k.time}</span>:null}</span>;
+    :<span className="wc-br2-when"><span className="wc-br2-date">{k.date}</span>{k.time?<span className="wc-br2-time">{k.time}</span>:null}</span>;
   const matchup=m.home.team&&m.away.team?`${m.home.team.name} v ${m.away.team.name}`:`${m.home.label} v ${m.away.label}`;
   return (
     <button className="wc-br2-card" onClick={()=>onOpen(m)} title={`${matchup} — ${f.venue}, ${f.city}`}>
@@ -2672,8 +2672,79 @@ function fallbackGroupStageNarrative(qualifiers:ReturnType<typeof computeQualifi
   return p.join(" ");
 }
 
-function StageNarrative({facts,cacheKey,fallback,onSelectTeam,onSelectGroup}:{
-  facts:string;cacheKey:string;fallback:string;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
+// ── Knockout-round recap (same shape as the group review, keyed by round) ─────
+// Each recap "round" maps to one or more KO fixture rounds (the Final view folds in
+// the third-place playoff). A round shows in the recap once ≥1 of its games is done.
+const RECAP_ROUND_DEFS:{key:string;label:string;rounds:string[]}[]=[
+  {key:"R32",label:"Round of 32",rounds:["R32"]},
+  {key:"R16",label:"Round of 16",rounds:["R16"]},
+  {key:"QF",label:"Quarterfinals",rounds:["QF"]},
+  {key:"SF",label:"Semifinals",rounds:["SF"]},
+  {key:"F",label:"Final",rounds:["3P","F"]},
+];
+interface KoMatch{fid:string;eventId?:string;home:string;away:string;hg:number;ag:number;margin:number;total:number;pkHome?:number;pkAway?:number;winner:string;loser:string;}
+function koRoundMatches(fids:Set<string>,koResults:Record<string,KoResult>,eventIds:Record<string,string>):KoMatch[]{
+  const out:KoMatch[]=[];
+  for(const f of KO_FIXTURES){
+    if(!fids.has(f.id)) continue;
+    const r=koResults[f.id]; if(!r) continue;
+    const homeWon=r.homeGoals>r.awayGoals||(r.homeGoals===r.awayGoals&&(r.pkHome??0)>(r.pkAway??0));
+    out.push({fid:f.id,eventId:eventIds[f.id],home:r.homeCode,away:r.awayCode,hg:r.homeGoals,ag:r.awayGoals,
+      margin:Math.abs(r.homeGoals-r.awayGoals),total:r.homeGoals+r.awayGoals,pkHome:r.pkHome,pkAway:r.pkAway,
+      winner:homeWon?r.homeCode:r.awayCode,loser:homeWon?r.awayCode:r.homeCode});
+  }
+  return out;
+}
+const koScoreText=(m:KoMatch)=>`${m.hg}-${m.ag}${m.pkHome!=null&&m.pkAway!=null?` (${m.pkHome}-${m.pkAway} pens)`:""}`;
+const rank=(c:string)=>TEAM_BY_CODE[c]?.fifaRank??999;
+function koUpsets(matches:KoMatch[]):KoMatch[]{
+  return matches.filter(m=>rank(m.winner)>rank(m.loser))
+    .sort((a,b)=>(rank(b.winner)-rank(b.loser))-(rank(a.winner)-rank(a.loser)));
+}
+function buildKnockoutFacts(label:string, matches:KoMatch[], total:number, goals:GoalEvent[], cards:CardEvent[], roundStats:Record<string,EventStat>):string{
+  const nm=(c:string)=>TEAM_BY_CODE[c]?.name??c;
+  const tline=(c:string)=>`${nm(c)} (#${rank(c)})`;
+  const eliminated=[...matches].map(m=>m.loser).sort((a,b)=>rank(a)-rank(b));
+  const shootouts=matches.filter(m=>m.pkHome!=null);
+  const upsets=koUpsets(matches);
+  const scorers=stageTopScorers(goals,5);
+  const big=[...matches].sort((a,b)=>b.margin-a.margin||b.total-a.total)[0];
+  const fest=[...matches].sort((a,b)=>b.total-a.total||b.margin-a.margin)[0];
+  const agg=aggTeamStats(roundStats);
+  const poss=[...agg.entries()].map(([c,e])=>({c,v:e.matches?e.possessionPct/e.matches:0})).sort((a,b)=>b.v-a.v)[0];
+  const shots=[...agg.entries()].map(([c,e])=>({c,v:e.totalShots})).sort((a,b)=>b.v-a.v)[0];
+  return [
+    "TYPE: knockout-round retrospective",
+    `Round: the World Cup 2026 ${label}; ${matches.length} of ${total} matches complete.`,
+    `Results: ${matches.map(m=>`${nm(m.home)} ${koScoreText(m)} ${nm(m.away)}`).join("; ")||"none yet"}`,
+    `Teams advancing: ${matches.map(m=>nm(m.winner)).join(", ")||"n/a"}`,
+    `Teams eliminated (lower number = higher FIFA rank): ${eliminated.map(tline).join(", ")||"none"}`,
+    shootouts.length?`Decided on penalties: ${shootouts.map(m=>`${nm(m.home)} ${m.pkHome}-${m.pkAway} ${nm(m.away)}`).join("; ")}`:"",
+    upsets.length?`Notable upsets (lower-ranked winners): ${upsets.slice(0,3).map(m=>`${nm(m.winner)} beat ${nm(m.loser)}`).join("; ")}`:"",
+    scorers.length?`Top scorers this round: ${scorers.map(s=>`${s.player} (${nm(s.team)}) ${s.goals}`).join(", ")}`:"",
+    big?`Biggest win: ${nm(big.home)} ${koScoreText(big)} ${nm(big.away)}`:"",
+    fest&&fest.total>0?`Highest-scoring match: ${nm(fest.home)} ${koScoreText(fest)} ${nm(fest.away)} (${fest.total} goals)`:"",
+    cards.filter(c=>c.red).length?`Red cards this round: ${cards.filter(c=>c.red).length}`:"",
+    poss?`Most possession: ${nm(poss.c)} (~${Math.round(poss.v)}% avg)`:"",
+    shots?`Most shots: ${nm(shots.c)} (${shots.v})`:"",
+    `Guidance: tell the story of the ${label} — the drama, upsets, shootouts, standout performers, and who looks dangerous heading deeper into the tournament. 2-3 short paragraphs, accurate to the facts.`,
+  ].filter(Boolean).join("\n");
+}
+function fallbackKnockoutNarrative(label:string, matches:KoMatch[]):string{
+  const nm=(c:string)=>TEAM_BY_CODE[c]?.name??c;
+  if(!matches.length) return `The ${label} is about to get underway.`;
+  const big=[...matches].sort((a,b)=>b.margin-a.margin)[0];
+  const shoot=matches.find(m=>m.pkHome!=null);
+  const upset=koUpsets(matches)[0];
+  const p:string[]=[`The ${label} delivered ${matches.length} result${matches.length===1?"":"s"}.`];
+  if(big&&big.margin>=2) p.push(`The standout result was ${nm(big.home)} ${big.hg}-${big.ag} ${nm(big.away)}.`);
+  if(upset) p.push(`${nm(upset.winner)} pulled off a notable upset past ${nm(upset.loser)}.`);
+  if(shoot) p.push(`${nm((shoot.pkHome??0)>(shoot.pkAway??0)?shoot.home:shoot.away)} held their nerve in a penalty shootout.`);
+  return p.join(" ");
+}
+
+function StageNarrative({facts,cacheKey,fallback,label,onSelectTeam,onSelectGroup}:{
+  facts:string;cacheKey:string;fallback:string;label:string;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
 }){
   const [text,setText]=useState(fallback);
   const [status,setStatus]=useState<"loading"|"ok"|"fallback">("loading");
@@ -2690,7 +2761,7 @@ function StageNarrative({facts,cacheKey,fallback,onSelectTeam,onSelectGroup}:{
   },[facts,cacheKey,fallback]);
   return (
     <div className="wc-stage-narrative">
-      <span className="wc-micro-tag"><Sparkles size={13}/> The story of the group stage{status==="loading"&&<Loader2 className="wc-spin" size={12}/>}</span>
+      <span className="wc-micro-tag"><Sparkles size={13}/> The story of {label}{status==="loading"&&<Loader2 className="wc-spin" size={12}/>}</span>
       {text.split(/\n{2,}/).map((para,i)=>(
         <p key={i}><MicroDigestLinks text={para} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/></p>
       ))}
@@ -2780,7 +2851,7 @@ function GroupStageReview({groupResults,qualifiers,goals,cards,matchStats,detail
   return (
     <div className="wc-review">
       <h2 className="wc-review-title">Group Stage in Review</h2>
-      <StageNarrative facts={facts} cacheKey={cacheKey} fallback={fallback} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
+      <StageNarrative facts={facts} cacheKey={cacheKey} fallback={fallback} label="the group stage" onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
 
       <div className="wc-review-grid">
         <section className="wc-stats-panel">
@@ -2836,6 +2907,186 @@ function GroupStageReview({groupResults,qualifiers,goals,cards,matchStats,detail
         )}
       </div>
       <p className="wc-stats-note">The recap is AI-written from the group-stage facts (results, qualifiers, scorers, stats) and cached. Highlight cards are computed directly from the data.</p>
+    </div>
+  );
+}
+
+function KnockoutRoundReview({label,fids,total,koResults,eventIds,goals,cards,matchStats,detailIds,onOpenDetail,onSelectTeam,onSelectGroup}:{
+  label:string;fids:Set<string>;total:number;koResults:Record<string,KoResult>;eventIds:Record<string,string>;
+  goals:GoalEvent[];cards:CardEvent[];matchStats:Record<string,EventStat>;
+  detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
+}){
+  const matches=useMemo(()=>koRoundMatches(fids,koResults,eventIds),[fids,koResults,eventIds]);
+  const roundGoals=useMemo(()=>goals.filter(g=>fids.has(g.fixtureId)),[goals,fids]);
+  const roundCards=useMemo(()=>cards.filter(c=>fids.has(c.fixtureId)),[cards,fids]);
+  const roundStats=useMemo(()=>{
+    const eset=new Set(matches.map(m=>m.eventId).filter(Boolean) as string[]);
+    return Object.fromEntries(Object.entries(matchStats).filter(([eid])=>eset.has(eid)));
+  },[matches,matchStats]);
+  const facts=useMemo(()=>buildKnockoutFacts(label,matches,total,roundGoals,roundCards,roundStats),[label,matches,total,roundGoals,roundCards,roundStats]);
+  const fallback=useMemo(()=>fallbackKnockoutNarrative(label,matches),[label,matches]);
+  const cacheKey=useMemo(()=>`ko:${label}:${digestCacheKey(facts)}`,[facts,label]);
+
+  const scorers=useMemo(()=>stageTopScorers(roundGoals,6),[roundGoals]);
+  const big=useMemo(()=>[...matches].sort((a,b)=>b.margin-a.margin||b.total-a.total)[0],[matches]);
+  const fest=useMemo(()=>[...matches].sort((a,b)=>b.total-a.total||b.margin-a.margin)[0],[matches]);
+  const upsets=useMemo(()=>koUpsets(matches),[matches]);
+  const shootouts=useMemo(()=>matches.filter(m=>m.pkHome!=null),[matches]);
+  const eliminated=useMemo(()=>[...matches].map(m=>m.loser).sort((a,b)=>rank(a)-rank(b)).slice(0,5),[matches]);
+  const giantKillers=useMemo(()=>upsets.slice(0,5).map(m=>m.winner),[upsets]);
+  const agg=useMemo(()=>aggTeamStats(roundStats),[roundStats]);
+  const statLead=(valueFn:(e:Record<string,number>)=>number)=>[...agg.entries()].map(([c,e])=>({c,v:valueFn(e)})).sort((a,b)=>b.v-a.v)[0];
+  const possLead=statLead(e=>e.matches?e.possessionPct/e.matches:0);
+  const shotsLead=statLead(e=>e.totalShots);
+  const passLead=statLead(e=>e.totalPasses?(e.accuratePasses/e.totalPasses)*100:0);
+  const maxScorer=scorers[0]?.goals??1;
+  const teamRow=(c:string)=>(
+    <button type="button" className="wc-shock-row" key={c} onClick={()=>onSelectTeam(c)} title={TEAM_BY_CODE[c]?.name??c}>
+      <Flag code={c} className="wc-flag-sm"/>
+      <span className="wc-shock-name">{TEAM_BY_CODE[c]?.name??c}</span>
+      <span className="wc-shock-rank">#{rank(c)}</span>
+    </button>
+  );
+  const matchRow=(lbl:string,m:KoMatch|undefined,note?:string)=>{
+    if(!m) return null;
+    const can=detailIds.has(m.fid);
+    return (
+      <button type="button" className={`wc-rv-match${can?" wc-rv-match-link":""}`} onClick={can?()=>onOpenDetail(m.fid):undefined} disabled={!can}>
+        <span className="wc-rv-matchlabel">{lbl}</span>
+        <span className="wc-rv-score">
+          <span className="wc-rv-mteam"><Flag code={m.home} className="wc-flag-sm"/>{TEAM_BY_CODE[m.home]?.name??m.home}</span>
+          <b>{m.hg}–{m.ag}</b>
+          <span className="wc-rv-mteam">{TEAM_BY_CODE[m.away]?.name??m.away}<Flag code={m.away} className="wc-flag-sm"/></span>
+        </span>
+        {m.pkHome!=null?<span className="wc-rv-matchnote">{m.pkHome}–{m.pkAway} on penalties</span>:note?<span className="wc-rv-matchnote">{note}</span>:null}
+        {can&&<span className="wc-rv-chev">›</span>}
+      </button>
+    );
+  };
+  const statRow=(lbl:string, lead:{c:string;v:number}|undefined, fmt:(v:number)=>string)=> lead?(
+    <div className="wc-rv-statrow">
+      <span className="wc-rv-statlabel">{lbl}</span>
+      <button className="wc-stat-team" onClick={()=>onSelectTeam(lead.c)}><Flag code={lead.c} className="wc-chip-flag"/>{TEAM_BY_CODE[lead.c]?.name??lead.c}</button>
+      <span className="wc-rv-statval">{fmt(lead.v)}</span>
+    </div>
+  ):null;
+
+  return (
+    <div className="wc-review">
+      <h2 className="wc-review-title">{label} in Review</h2>
+      <StageNarrative facts={facts} cacheKey={cacheKey} fallback={fallback} label={`the ${label}`} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
+
+      <div className="wc-review-grid">
+        <section className="wc-stats-panel">
+          <h3 className="wc-stats-h"><BallIcon size={14}/> Standout matches</h3>
+          <div className="wc-rv-matches">
+            {matchRow("Biggest win",big)}
+            {fest&&fest.fid!==big?.fid&&fest.total>0&&matchRow("Goal-fest",fest,`${fest.total} goals`)}
+            {upsets[0]&&matchRow("Biggest upset",upsets[0])}
+            {shootouts.length>0&&matchRow("Shootout drama",shootouts[0])}
+            {matches.length===0&&<div className="wc-rv-match wc-rv-match-stat"><span className="wc-rv-score">No results in yet.</span></div>}
+          </div>
+        </section>
+
+        <section className="wc-stats-panel">
+          <h3 className="wc-stats-h"><ArrowDown size={15}/> Biggest shocks</h3>
+          <div className="wc-shock-cols">
+            <div className="wc-shock-col">
+              <div className="wc-rv-sub wc-shock-out-head">Eliminated</div>
+              {eliminated.length?eliminated.map(teamRow):<div className="wc-shock-note">—</div>}
+            </div>
+            <div className="wc-shock-col">
+              <div className="wc-rv-sub wc-shock-in-head">Giant-killers</div>
+              {giantKillers.length?giantKillers.map(teamRow):<div className="wc-shock-note">No upsets this round.</div>}
+            </div>
+          </div>
+          <div className="wc-shock-note">Number = FIFA world ranking.</div>
+        </section>
+
+        {scorers.length>0&&(
+          <section className="wc-stats-panel">
+            <h3 className="wc-stats-h"><Medal size={15}/> Goals this round</h3>
+            <div className="wc-stats-list">
+              {scorers.map((s,i)=>(
+                <div className="wc-stats-row" key={i}>
+                  <span className="wc-stats-rank">{i+1}</span>
+                  <div className="wc-stats-bar-wrap">
+                    <div className="wc-stats-bar-top">
+                      <button className="wc-stat-team" onClick={()=>onSelectTeam(s.team)}><Flag code={s.team} className="wc-flag-sm"/>{s.player}</button>
+                      <span className="wc-stats-val">{s.goals}</span>
+                    </div>
+                    <div className="wc-stats-bar"><div className="wc-stats-bar-fill" style={{width:`${(s.goals/maxScorer)*100}%`}}/></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {agg.size>0&&(
+          <section className="wc-stats-panel">
+            <h3 className="wc-stats-h"><BarChart3 size={15}/> Stat kings</h3>
+            {statRow("Possession",possLead,v=>`${Math.round(v)}%`)}
+            {statRow("Shots",shotsLead,v=>`${Math.round(v)}`)}
+            {statRow("Pass accuracy",passLead,v=>`${Math.round(v)}%`)}
+          </section>
+        )}
+      </div>
+      <p className="wc-stats-note">The recap is AI-written from this round's facts (results, advancers, scorers, stats) and cached. Highlight cards are computed directly from the data.</p>
+    </div>
+  );
+}
+
+// Recap hub: a round selector (Group Stage → Final) over the per-round review pages.
+// Only rounds with ≥1 completed match appear; defaults to the latest such round.
+function RecapView({groupResults,qualifiers,koResults,eventIds,goals,cards,matchStats,detailIds,onOpenDetail,onSelectTeam,onSelectGroup}:{
+  groupResults:Record<string,ScoreResult>;qualifiers:ReturnType<typeof computeQualifiers>;
+  koResults:Record<string,KoResult>;eventIds:Record<string,string>;
+  goals:GoalEvent[];cards:CardEvent[];matchStats:Record<string,EventStat>;
+  detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(c:string)=>void;onSelectGroup:(l:string)=>void;
+}){
+  const groupsDone=groupStageComplete(groupResults);
+  const rounds=useMemo(()=>{
+    const out:{key:string;label:string;fids:Set<string>;total:number;done:number}[]=[];
+    if(groupsDone) out.push({key:"group",label:"Group Stage",fids:new Set(),total:0,done:0});
+    for(const def of RECAP_ROUND_DEFS){
+      const fx=KO_FIXTURES.filter(f=>def.rounds.includes(f.round));
+      const done=fx.filter(f=>koResults[f.id]).length;
+      if(done>0) out.push({key:def.key,label:def.label,fids:new Set(fx.map(f=>f.id)),total:fx.length,done});
+    }
+    return out;
+  },[groupsDone,koResults]);
+
+  const latest=rounds.length?rounds[rounds.length-1].key:"group";
+  const [sel,setSel]=useState<string>("");
+  const active=sel&&rounds.some(r=>r.key===sel)?sel:latest;
+  const activeDef=rounds.find(r=>r.key===active);
+
+  if(!rounds.length){
+    return (
+      <div className="wc-stats-empty">
+        <Sparkles size={40} className="wc-stats-empty-icon"/>
+        <p>Recaps unlock as stages finish — the group stage review appears once all 12 groups are done.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="wc-recap">
+      <div className="wc-recap-rounds" role="tablist" aria-label="Recap by round">
+        {rounds.map(r=>(
+          <button key={r.key} role="tab" aria-selected={active===r.key}
+            className={`wc-recap-round${active===r.key?" wc-recap-round-active":""}`} onClick={()=>setSel(r.key)}>
+            {r.label}{r.total>0&&r.done<r.total&&<span className="wc-recap-prog">{r.done}/{r.total}</span>}
+          </button>
+        ))}
+      </div>
+      {active==="group"
+        ? <GroupStageReview groupResults={groupResults} qualifiers={qualifiers} goals={goals} cards={cards}
+            matchStats={matchStats} detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>
+        : activeDef&&<KnockoutRoundReview label={activeDef.label} fids={activeDef.fids} total={activeDef.total}
+            koResults={koResults} eventIds={eventIds} goals={goals} cards={cards} matchStats={matchStats}
+            detailIds={detailIds} onOpenDetail={onOpenDetail} onSelectTeam={onSelectTeam} onSelectGroup={onSelectGroup}/>}
     </div>
   );
 }
@@ -4077,7 +4328,7 @@ export default function App() {
         <div className="wc-nav-explore">
           {groupsComplete&&(
             <button className={`wc-nav-btn wc-nav-teams${stage==="review"?" wc-nav-active":""}`} onClick={()=>setStage("review")}>
-              <Sparkles size={14}/> Group Recap
+              <Sparkles size={14}/> Recap
             </button>
           )}
           <button className={`wc-nav-btn wc-nav-teams${stage==="stats"?" wc-nav-active":""}`} onClick={()=>setStage("stats")}>
@@ -4098,8 +4349,9 @@ export default function App() {
         )}
         {stage==="thirds"&&<ThirdPlaceTableView groupResults={groupResults} liveByFixture={liveByFixture} onSelectTeam={goToTeam}/>}
         {stage==="review"&&(
-          <GroupStageReview groupResults={groupResults} qualifiers={qualifiers} goals={liveGoals} cards={liveCards}
-            matchStats={matchStats} detailIds={detailIds} onOpenDetail={setDetailId} onSelectTeam={goToTeam} onSelectGroup={goToGroup}/>
+          <RecapView groupResults={groupResults} qualifiers={qualifiers} koResults={koResults} eventIds={liveEventIds}
+            goals={liveGoals} cards={liveCards} matchStats={matchStats} detailIds={detailIds}
+            onOpenDetail={setDetailId} onSelectTeam={goToTeam} onSelectGroup={goToGroup}/>
         )}
         {stage==="stats"&&(
           <StatsView goals={liveGoals} cards={liveCards} matchesPlayed={liveMatchesPlayed} matchStats={matchStats} onSelectTeam={goToTeam}/>
@@ -4691,10 +4943,11 @@ const CSS = `
 .wc-br2-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;font-weight:700;letter-spacing:.02em;}
 .wc-br2-score{font-family:'JetBrains Mono',monospace;font-weight:700;flex-shrink:0;}
 .wc-br2-pk{font-size:.6rem;color:var(--chalk-dim);}
-.wc-br2-foot{margin-top:.18rem;font-size:.56rem;color:var(--chalk-dim);letter-spacing:.02em;display:flex;align-items:baseline;justify-content:space-between;gap:.3rem;}
-.wc-br2-when{white-space:nowrap;}
-.wc-br2-time{color:var(--chalk);}
-.wc-br2-venue{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.75;}
+.wc-br2-foot{margin-top:.18rem;font-size:.56rem;color:var(--chalk-dim);letter-spacing:.02em;display:flex;flex-direction:column;align-items:flex-start;gap:.05rem;}
+.wc-br2-when{display:flex;flex-direction:column;line-height:1.3;max-width:100%;}
+.wc-br2-date{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+.wc-br2-time{color:var(--chalk);white-space:nowrap;}
+.wc-br2-venue{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.75;max-width:100%;}
 .wc-br2-live{display:inline-flex;align-items:center;gap:.25rem;color:#ff8a8a;font-weight:700;}
 /* connectors — LEFT side: outgoing right, incoming left */
 .wc-br2-l.wc-br2-src .wc-br2-match::after{content:"";position:absolute;right:0;width:var(--g);box-sizing:border-box;border-right:2px solid var(--ln);}
@@ -4786,6 +5039,12 @@ const CSS = `
 .wc-board-bar-fill{height:100%;background:var(--gold);border-radius:99px;}
 .wc-stats-note{font-size:.7rem;color:var(--chalk-dim);margin-top:1.2rem;}
 /* Stage review (Group Stage in Review) */
+.wc-recap-rounds{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:1.1rem;}
+.wc-recap-round{display:inline-flex;align-items:center;gap:.35rem;font-family:'Anton',sans-serif;font-size:.82rem;letter-spacing:.03em;text-transform:uppercase;color:var(--chalk-dim);background:var(--pitch-card);border:1px solid var(--pitch-line);border-radius:99px;padding:.42rem .8rem;cursor:pointer;transition:color .15s,border-color .15s,background .15s;}
+.wc-recap-round:hover{color:var(--chalk);border-color:rgba(236,240,248,.28);}
+.wc-recap-round-active{color:#0c0f16;background:var(--chalk);border-color:var(--chalk);}
+.wc-recap-prog{font-size:.62rem;font-family:'Inter',sans-serif;font-weight:700;opacity:.7;background:rgba(0,0,0,.12);border-radius:99px;padding:.05rem .3rem;}
+.wc-recap-round:not(.wc-recap-round-active) .wc-recap-prog{background:rgba(255,255,255,.08);}
 .wc-review-title{font-family:'Anton',sans-serif;font-size:1.55rem;text-transform:uppercase;letter-spacing:.02em;color:var(--chalk);margin:0 0 .9rem;}
 .wc-stage-narrative{background:linear-gradient(120deg,rgba(215,163,61,.1),rgba(215,163,61,.02));border:1px solid rgba(215,163,61,.3);border-radius:14px;padding:1rem 1.2rem;margin-bottom:1.2rem;}
 .wc-stage-narrative .wc-micro-tag{font-size:.64rem;}
