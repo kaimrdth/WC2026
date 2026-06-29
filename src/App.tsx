@@ -471,7 +471,7 @@ type GoalKind = "goal"|"header"|"penalty"|"freekick"|"volley"|"owngoal";
 // A scored goal. `teamCode` is the team *credited* on the scoreline (so own goals
 // are attributed to the beneficiary, which is how the match score reads).
 interface GoalEvent { fixtureId:string; teamCode:string; player:string; minute:string; kind:GoalKind; }
-interface CardEvent { teamCode:string; player:string; red:boolean; }
+interface CardEvent { fixtureId:string; teamCode:string; player:string; minute:string; red:boolean; }
 // A match currently in progress (oriented to the fixture's home/away).
 interface LiveGame { fixtureId:string; eventId:string; homeCode:string; awayCode:string; homeGoals:number; awayGoals:number; clock:string; status:string; }
 interface LiveData {
@@ -602,7 +602,7 @@ async function fetchLiveData(): Promise<LiveData> {
           : scorerCode;
         goals.push({ fixtureId: fixture.id, teamCode, player, minute: x.clock?.displayValue ?? "", kind });
       } else if (x.yellowCard || x.redCard) {
-        cards.push({ teamCode: scorerCode, player, red: !!x.redCard });
+        cards.push({ fixtureId: fixture.id, teamCode: scorerCode, player, minute: x.clock?.displayValue ?? "", red: !!x.redCard });
       }
     }
   }
@@ -3833,9 +3833,15 @@ export default function App() {
   const [koResults,setKoResults]=useState<Record<string,KoResult>>(()=>loadStore("wc26_koresults"));
   const [koTeams,setKoTeams]=useState<Record<string,{homeCode:string;awayCode:string}>>(()=>loadStore("wc26_koteams"));
   const [liveStatus,setLiveStatus]=useState<"loading"|"ok"|"error">("loading");
-  const [liveGoals,setLiveGoals]=useState<GoalEvent[]>([]);
-  const [liveCards,setLiveCards]=useState<CardEvent[]>([]);
-  const [liveMatchesPlayed,setLiveMatchesPlayed]=useState(0);
+  // Goals & cards persisted per fixture, so a completed match's events survive even after
+  // ESPN's scoreboard window scrolls past it. Each poll overwrites the entries for the
+  // fixtures it sees with their authoritative (final) set; older fixtures are left intact.
+  const [eventArchive,setEventArchive]=useState<Record<string,{goals:GoalEvent[];cards:CardEvent[]}>>(()=>{
+    try{ return JSON.parse(localStorage.getItem("wc26_events") || "{}"); }catch{ return {}; }
+  });
+  const liveGoals=useMemo(()=>Object.values(eventArchive).flatMap(e=>e.goals),[eventArchive]);
+  const liveCards=useMemo(()=>Object.values(eventArchive).flatMap(e=>e.cards),[eventArchive]);
+  const liveMatchesPlayed=Object.keys(eventArchive).length;
   const [liveEventIds,setLiveEventIds]=useState<Record<string,string>>(()=>loadStore("wc26_eventids"));
   const [liveGames,setLiveGames]=useState<LiveGame[]>([]);
   const [updatedAt,setUpdatedAt]=useState<number|null>(null);
@@ -3914,9 +3920,18 @@ export default function App() {
             setKoResults(prev=>{ const next={...prev,...live.koResults}; save("wc26_koresults",next); return next; });
             setKoTeams(prev=>{ const next={...prev,...live.koTeams}; save("wc26_koteams",next); return next; });
             setLiveEventIds(prev=>{ const next={...prev,...live.eventIds}; save("wc26_eventids",next); return next; });
-            setLiveGoals(live.goals);
-            setLiveCards(live.cards);
-            setLiveMatchesPlayed(live.matchesPlayed);
+            // Archive this poll's completed-match events per fixture. We reset every fixture
+            // seen as completed (results/koResults keys) to its authoritative set — including
+            // 0-0s with no events — then file the goals/cards, so older fixtures persist and
+            // re-seen ones can't double up or go stale.
+            setEventArchive(prev=>{
+              const next={...prev};
+              for(const fid of [...Object.keys(live.results),...Object.keys(live.koResults)]) next[fid]={goals:[],cards:[]};
+              for(const g of live.goals){ (next[g.fixtureId] ||= {goals:[],cards:[]}).goals.push(g); }
+              for(const c of live.cards){ (next[c.fixtureId] ||= {goals:[],cards:[]}).cards.push(c); }
+              save("wc26_events",next);
+              return next;
+            });
             setLiveGames(live.liveGames);
             setUpdatedAt(Date.now());
             setLiveStatus("ok");
