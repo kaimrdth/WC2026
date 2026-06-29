@@ -932,8 +932,8 @@ const KO_FIXTURES: KoFixture[] = [
   { id:"ko-QF-2", round:"QF", n:2, kickoff:"2026-07-10T19:00Z", venue:"SoFi Stadium", city:"Inglewood, California", homeSlot:"Round of 16 5 Winner", awaySlot:"Round of 16 6 Winner" },
   { id:"ko-QF-3", round:"QF", n:3, kickoff:"2026-07-11T21:00Z", venue:"Hard Rock Stadium", city:"Miami Gardens, Florida", homeSlot:"Round of 16 3 Winner", awaySlot:"Round of 16 4 Winner" },
   { id:"ko-QF-4", round:"QF", n:4, kickoff:"2026-07-12T01:00Z", venue:"GEHA Field at Arrowhead Stadium", city:"Kansas City, Missouri", homeSlot:"Round of 16 7 Winner", awaySlot:"Round of 16 8 Winner" },
-  { id:"ko-SF-1", round:"SF", n:1, kickoff:"2026-07-14T19:00Z", venue:"AT&T Stadium", city:"Arlington, Texas", homeSlot:"Quarterfinal 1 Winner", awaySlot:"Quarterfinal 2 Winner" },
-  { id:"ko-SF-2", round:"SF", n:2, kickoff:"2026-07-15T19:00Z", venue:"Mercedes-Benz Stadium", city:"Atlanta, Georgia", homeSlot:"Quarterfinal 3 Winner", awaySlot:"Quarterfinal 4 Winner" },
+  { id:"ko-SF-1", round:"SF", n:1, kickoff:"2026-07-14T19:00Z", venue:"AT&T Stadium", city:"Arlington, Texas", homeSlot:"Quarterfinal 2 Winner", awaySlot:"Quarterfinal 3 Winner" },
+  { id:"ko-SF-2", round:"SF", n:2, kickoff:"2026-07-15T19:00Z", venue:"Mercedes-Benz Stadium", city:"Atlanta, Georgia", homeSlot:"Quarterfinal 1 Winner", awaySlot:"Quarterfinal 4 Winner" },
   { id:"ko-3P-1", round:"3P", n:1, kickoff:"2026-07-18T21:00Z", venue:"Hard Rock Stadium", city:"Miami Gardens, Florida", homeSlot:"Semifinal 1 Loser", awaySlot:"Semifinal 2 Loser" },
   { id:"ko-F-1", round:"F", n:1, kickoff:"2026-07-19T19:00Z", venue:"MetLife Stadium", city:"East Rutherford, New Jersey", homeSlot:"Semifinal 1 Winner", awaySlot:"Semifinal 2 Winner" },
 ];
