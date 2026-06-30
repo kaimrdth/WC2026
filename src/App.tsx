@@ -1960,8 +1960,9 @@ function BracketCard({m,result,live,onOpen}:{
   const teamRow=(side:KoSide)=>{
     const t=side.team, g=goalFor(t?.code), pk=pkFor(t?.code);
     const isWin=!!t&&win===t.code;
+    const isLoss=!!t&&!!win&&win!==t.code;
     return (
-      <div className={`wc-br2-team${isWin?" wc-br2-win":""}${t?"":" wc-br2-tbd"}`}>
+      <div className={`wc-br2-team${isWin?" wc-br2-win":""}${isLoss?" wc-br2-lose":""}${t?"":" wc-br2-tbd"}`}>
         {t?<Flag code={t.code} className="wc-br2-flag"/>:<span className="wc-br2-flag-x"/>}
         {isFinal&&isWin&&<Crown size={11} className="wc-br2-crown"/>}
         <span className="wc-br2-name">{t?t.code:"TBD"}</span>
@@ -1997,7 +1998,7 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
   const viewportRef=useRef<HTMLDivElement|null>(null);
   const contentRef=useRef<HTMLDivElement|null>(null);
   const autoSet=useRef(false);
-  const [detail,setDetail]=useState(2); // 0 flags · 1 compact · 2 full
+  const [detail,setDetail]=useState(1); // 0 flags · 1 compact · 2 full
   const [fit,setFit]=useState({scale:1,x:0,y:0});
 
   // Scale the bracket to fully contain it in the viewport and centre it.
@@ -2018,11 +2019,11 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
     ro.observe(vp);
     return ()=>ro.disconnect();
   },[measure]);
-  // Pick a sensible starting detail once, by viewport width (phones start on flags).
+  // Start on compact (flags on the narrowest phones, where codes would be too small to read).
   useEffect(()=>{
     const vp=viewportRef.current; if(!vp||autoSet.current) return;
     autoSet.current=true;
-    setDetail(vp.clientWidth<560?0:vp.clientWidth<860?1:2);
+    setDetail(vp.clientWidth<460?0:1);
   },[]);
 
   const open=(m:ResolvedKo)=>{
@@ -4504,7 +4505,7 @@ const CSS = `
   background-image:
     radial-gradient(38% 80% at 50% 50%, rgba(232,52,58,.92), transparent 58%),
     radial-gradient(42% 86% at 50% 50%, rgba(20,170,90,.88), transparent 58%),
-    radial-gradient(36% 78% at 50% 50%, rgba(50,118,245,.92), transparent 58%),
+    radial-gradient(36% 78% at 50% 50%, rgba(96,170,255,1), transparent 58%),
     linear-gradient(var(--chalk),var(--chalk));
   background-repeat:no-repeat;
   background-size:170% 150%,150% 170%,185% 160%,100% 100%;
@@ -4994,7 +4995,8 @@ const CSS = `
 .wc-br2[data-lod="flags"] .wc-br2-teams{gap:.18rem;}
 .wc-br2[data-lod="flags"] .wc-br2-team{justify-content:center;gap:0;}
 .wc-br2[data-lod="flags"] .wc-br2-flag,.wc-br2[data-lod="flags"] .wc-br2-flag-x{width:1.25rem;height:1.25rem;}
-.wc-br2[data-lod="flags"] .wc-br2-win .wc-br2-flag{box-shadow:0 0 0 2px var(--gold);border-radius:3px;}
+.wc-br2[data-lod="flags"] .wc-br2-win .wc-br2-flag{box-shadow:0 0 0 2px var(--green-win);border-radius:3px;}
+.wc-br2[data-lod="flags"] .wc-br2-lose{opacity:.5;}
 .wc-br2-head{height:1.6rem;display:flex;align-items:center;justify-content:center;font-family:'Anton',sans-serif;letter-spacing:.02em;font-size:.62rem;text-transform:uppercase;color:var(--gold);text-align:center;}
 .wc-br2-body{flex:1;display:flex;flex-direction:column;}
 .wc-br2-match{flex:1;display:flex;flex-direction:column;justify-content:center;position:relative;padding:.22rem var(--g);min-height:44px;}
@@ -5003,7 +5005,8 @@ const CSS = `
 .wc-br2-card:hover{border-color:var(--gold);}
 .wc-br2-teams{display:flex;flex-direction:column;gap:.15rem;}
 .wc-br2-team{display:flex;align-items:center;gap:.35rem;font-size:.78rem;min-width:0;}
-.wc-br2-team.wc-br2-win{color:var(--gold);}
+.wc-br2-team.wc-br2-win{color:var(--green-win);font-weight:800;}
+.wc-br2-team.wc-br2-lose{color:var(--live);opacity:.78;}
 .wc-br2-team.wc-br2-tbd{color:var(--chalk-dim);}
 .wc-br2-flag{width:1.05rem;height:1.05rem;flex-shrink:0;}
 .wc-br2-flag-x{width:1.05rem;height:1.05rem;border-radius:2px;background:var(--pitch-line);flex-shrink:0;}
