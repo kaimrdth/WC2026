@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback, createContext, useContext } from "react";
 import type { ReactNode, CSSProperties, PointerEvent } from "react";
-import { RotateCcw, ChevronDown, ChevronUp, Info, Star, Check, X, Loader2, AlertCircle, Users, BarChart3, Medal, Ticket, ArrowDown, ArrowUp, ArrowLeftRight, CalendarClock, Sparkles, Trophy, Plus, Minus, Maximize2, Crown } from "lucide-react";
+import { RotateCcw, ChevronDown, ChevronUp, Info, Star, Check, X, Loader2, AlertCircle, Users, BarChart3, Medal, Ticket, ArrowDown, ArrowUp, ArrowLeftRight, CalendarClock, Sparkles, Trophy, Plus, Minus, Crown } from "lucide-react";
 
 const CONFED: Record<string, { label: string; color: string }> = {
   UEFA: { label: "UEFA", color: "#3D5FE0" },
@@ -1982,10 +1982,13 @@ function BracketCard({m,result,live,onOpen}:{
   );
 }
 
-const BR_Z_MIN=0.3, BR_Z_MAX=1.85;
-const clampN=(v:number,min:number,max:number)=>Math.min(Math.max(v,min),max);
-interface BrView{z:number;tx:number;ty:number;}
+const BR_DETAIL=["flags","mini","full"] as const;
+const BR_DETAIL_LABEL=["Flags","Compact","Full"];
 
+// The whole bracket always fits the viewport (object-fit: contain) and stays centred — no
+// panning. The −/＋ control changes the level of detail instead of zooming: less detail makes
+// the cards more compact, so the tree scales up bigger and clearer; more detail packs in
+// dates/venues at a smaller overall scale.
 function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTeam,onPreviewKo}:{
   ko:ResolvedKo[];koResults:Record<string,KoResult>;liveByFixture:Record<string,LiveGame>;goalsByFixture:Record<string,GoalEvent[]>;
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
@@ -1993,114 +1996,36 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
   const byId=useMemo(()=>Object.fromEntries(ko.map(m=>[m.fixture.id,m])) as Record<string,ResolvedKo>,[ko]);
   const viewportRef=useRef<HTMLDivElement|null>(null);
   const contentRef=useRef<HTMLDivElement|null>(null);
-  const natural=useRef({w:0,h:0});
-  const inited=useRef(false);
-  const [view,setViewState]=useState<BrView>({z:1,tx:0,ty:0});
-  const [gesturing,setGesturing]=useState(false);
+  const autoSet=useRef(false);
+  const [detail,setDetail]=useState(2); // 0 flags · 1 compact · 2 full
+  const [fit,setFit]=useState({scale:1,x:0,y:0});
 
-  // Pointer bookkeeping for pan + pinch.
-  const ptrs=useRef(new Map<number,{x:number;y:number}>());
-  const pinch=useRef<{dist:number;mx:number;my:number}|null>(null);
-  const moved=useRef(false);
-
-  // Clamp a candidate view so the bracket can't be panned fully off-screen; centers
-  // whichever axis is smaller than the viewport.
-  const clampView=useCallback((z:number,tx:number,ty:number):BrView=>{
-    const vp=viewportRef.current; if(!vp) return {z,tx,ty};
+  // Scale the bracket to fully contain it in the viewport and centre it.
+  const measure=useCallback(()=>{
+    const vp=viewportRef.current, c=contentRef.current; if(!vp||!c) return;
+    const nw=c.offsetWidth, nh=c.offsetHeight;
     const vw=vp.clientWidth, vh=vp.clientHeight;
-    const nz=clampN(z,BR_Z_MIN,BR_Z_MAX);
-    const cw=natural.current.w*nz, ch=natural.current.h*nz;
-    const nx=cw<=vw?(vw-cw)/2:clampN(tx,vw-cw,0);
-    const ny=ch<=vh?(vh-ch)/2:clampN(ty,vh-ch,0);
-    return {z:nz,tx:nx,ty:ny};
+    if(!nw||!nh) return;
+    const scale=Math.min(vw/nw, vh/nh, 1.4);
+    setFit({scale, x:(vw-nw*scale)/2, y:(vh-nh*scale)/2});
   },[]);
 
-  const fit=useCallback(()=>{
-    const vp=viewportRef.current; const {w,h}=natural.current;
-    if(!vp||!w||!h) return;
-    const nz=clampN(Math.min(vp.clientWidth/w, vp.clientHeight/h),BR_Z_MIN,BR_Z_MAX);
-    setViewState(clampView(nz,(vp.clientWidth-w*nz)/2,(vp.clientHeight-h*nz)/2));
-  },[clampView]);
-
-  // Zoom by a factor about a viewport-space point, keeping that point pinned to its content.
-  const zoomAround=useCallback((factor:number,px:number,py:number)=>{
-    setViewState(prev=>{
-      const nz=clampN(prev.z*factor,BR_Z_MIN,BR_Z_MAX);
-      const k=nz/prev.z;
-      return clampView(nz, px-(px-prev.tx)*k, py-(py-prev.ty)*k);
-    });
-  },[clampView]);
-
-  // Measure the natural (pre-transform) size; fit-to-screen on first paint.
-  useLayoutEffect(()=>{
-    const c=contentRef.current; if(!c) return;
-    natural.current={w:c.offsetWidth,h:c.offsetHeight};
-    if(!inited.current&&natural.current.w){ inited.current=true; fit(); }
-    else setViewState(v=>clampView(v.z,v.tx,v.ty));
-  },[ko.length,fit,clampView]);
-
-  useEffect(()=>{
-    const onResize=()=>setViewState(v=>clampView(v.z,v.tx,v.ty));
-    window.addEventListener("resize",onResize);
-    return ()=>window.removeEventListener("resize",onResize);
-  },[clampView]);
-
-  // ⌘/Ctrl + wheel zooms (non-passive so we can preventDefault); plain wheel is left alone.
+  // Re-measure after a detail change (card sizes change → natural size changes) and on resize.
+  useLayoutEffect(()=>{ measure(); },[detail,ko.length,measure]);
   useEffect(()=>{
     const vp=viewportRef.current; if(!vp) return;
-    const onWheel=(e:WheelEvent)=>{
-      if(!(e.ctrlKey||e.metaKey)) return;
-      e.preventDefault();
-      const r=vp.getBoundingClientRect();
-      zoomAround(e.deltaY<0?1.12:0.89, e.clientX-r.left, e.clientY-r.top);
-    };
-    vp.addEventListener("wheel",onWheel,{passive:false});
-    return ()=>vp.removeEventListener("wheel",onWheel);
-  },[zoomAround]);
-
-  const endGesture=()=>{ if(ptrs.current.size===0){ setGesturing(false); pinch.current=null; } };
-  const onPointerDown=(e:PointerEvent)=>{
-    moved.current=false;
-    ptrs.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
-    if(ptrs.current.size===2) setGesturing(true);
-  };
-  const onPointerMove=(e:PointerEvent)=>{
-    const rec=ptrs.current.get(e.pointerId); if(!rec) return;
-    const prev={...rec}; rec.x=e.clientX; rec.y=e.clientY;
-    const vp=viewportRef.current; if(!vp) return;
-    const r=vp.getBoundingClientRect();
-    if(ptrs.current.size>=2){
-      moved.current=true; setGesturing(true);
-      const pts=[...ptrs.current.values()];
-      const dist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
-      const mx=(pts[0].x+pts[1].x)/2-r.left, my=(pts[0].y+pts[1].y)/2-r.top;
-      if(pinch.current){
-        const f=dist/(pinch.current.dist||dist);
-        const pmx=pinch.current.mx, pmy=pinch.current.my;
-        setViewState(p=>{
-          const nz=clampN(p.z*f,BR_Z_MIN,BR_Z_MAX); const k=nz/p.z;
-          return clampView(nz, mx-(pmx-p.tx)*k, my-(pmy-p.ty)*k);
-        });
-      }
-      pinch.current={dist,mx,my};
-    } else {
-      const dx=e.clientX-prev.x, dy=e.clientY-prev.y;
-      if(!moved.current && Math.hypot(e.clientX-prev.x,e.clientY-prev.y)>4){
-        moved.current=true; setGesturing(true);
-        try{ vp.setPointerCapture(e.pointerId); }catch{ /* ignore */ }
-      }
-      if(moved.current) setViewState(p=>clampView(p.z,p.tx+dx,p.ty+dy));
-    }
-  };
-  const onPointerUp=(e:PointerEvent)=>{
-    ptrs.current.delete(e.pointerId);
-    if(ptrs.current.size<2) pinch.current=null;
-    try{ viewportRef.current?.releasePointerCapture(e.pointerId); }catch{ /* ignore */ }
-    endGesture();
-  };
+    const ro=new ResizeObserver(()=>measure());
+    ro.observe(vp);
+    return ()=>ro.disconnect();
+  },[measure]);
+  // Pick a sensible starting detail once, by viewport width (phones start on flags).
+  useEffect(()=>{
+    const vp=viewportRef.current; if(!vp||autoSet.current) return;
+    autoSet.current=true;
+    setDetail(vp.clientWidth<560?0:vp.clientWidth<860?1:2);
+  },[]);
 
   const open=(m:ResolvedKo)=>{
-    if(moved.current) return; // a drag/pinch shouldn't open a match
     const id=m.fixture.id;
     if(koResults[id]||detailIds.has(id)||liveByFixture[id]) onOpenDetail(id);
     else if(m.home.team&&m.away.team) onPreviewKo(m.home.team.code,m.away.team.code,m.fixture);
@@ -2115,15 +2040,12 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
       <div className="wc-br2-body">{ids.map(cardFor)}</div>
     </div>
   );
-  const lod=view.z<0.52?"flags":view.z<0.8?"mini":"full";
-  const pct=Math.round(view.z*100);
 
   return (
     <>
-      <div className="wc-br2-viewport" ref={viewportRef}
-        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
-        <div className="wc-br2" ref={contentRef} data-lod={lod}
-          style={{transform:`translate(${view.tx}px,${view.ty}px) scale(${view.z})`,transformOrigin:"0 0",transition:gesturing?"none":"transform .18s ease"}}>
+      <div className="wc-br2-viewport" ref={viewportRef}>
+        <div className="wc-br2" ref={contentRef} data-lod={BR_DETAIL[detail]}
+          style={{transform:`translate(${fit.x}px,${fit.y}px) scale(${fit.scale})`,transformOrigin:"0 0",transition:"transform .25s ease"}}>
           {col("R32",LEFT_ORDER.R32,"l","src",false)}
           {col("R16",LEFT_ORDER.R16,"l","src",true)}
           {col("QF",LEFT_ORDER.QF,"l","src",true)}
@@ -2137,16 +2059,15 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
           {col("R16",RIGHT_ORDER.R16,"r","src",true)}
           {col("R32",RIGHT_ORDER.R32,"r","src",false)}
         </div>
-        <div className="wc-br2-zoom" role="group" aria-label="Bracket zoom">
-          <button type="button" className="wc-br2-zbtn" aria-label="Zoom out"
-            onClick={()=>{const vp=viewportRef.current!;zoomAround(0.8,vp.clientWidth/2,vp.clientHeight/2);}}><Minus size={15}/></button>
-          <button type="button" className="wc-br2-zpct" aria-label="Fit bracket to screen" onClick={fit}>{pct}%</button>
-          <button type="button" className="wc-br2-zbtn" aria-label="Zoom in"
-            onClick={()=>{const vp=viewportRef.current!;zoomAround(1.25,vp.clientWidth/2,vp.clientHeight/2);}}><Plus size={15}/></button>
-          <button type="button" className="wc-br2-zbtn" aria-label="Fit to screen" onClick={fit}><Maximize2 size={14}/></button>
+        <div className="wc-br2-zoom" role="group" aria-label="Bracket detail level">
+          <button type="button" className="wc-br2-zbtn" aria-label="Less detail" disabled={detail===0}
+            onClick={()=>setDetail(d=>Math.max(0,d-1))}><Minus size={15}/></button>
+          <span className="wc-br2-zpct">{BR_DETAIL_LABEL[detail]}</span>
+          <button type="button" className="wc-br2-zbtn" aria-label="More detail" disabled={detail===2}
+            onClick={()=>setDetail(d=>Math.min(2,d+1))}><Plus size={15}/></button>
         </div>
       </div>
-      <div className="wc-br2-hint"><Info size={12}/> Drag to pan · pinch or ⌘-scroll to zoom · tap a match for details</div>
+      <div className="wc-br2-hint"><Info size={12}/> Whole bracket, always in view · use −/＋ for more or less detail · tap a match for details</div>
       {byId["ko-3P-1"]&&(
         <div className="wc-br2-third">
           <div className="wc-br2-head">Third-place play-off</div>
@@ -5052,8 +4973,7 @@ const CSS = `
 
 /* knockout */
 /* ── Two-sided knockout bracket (compact code cards + elbow connectors) ── */
-.wc-br2-viewport{position:relative;overflow:hidden;touch-action:none;height:min(76vh,720px);min-height:340px;border:1px solid var(--pitch-line);border-radius:16px;cursor:grab;user-select:none;-webkit-user-select:none;background:radial-gradient(120% 80% at 50% 0%,rgba(77,139,255,.06),transparent 60%),radial-gradient(120% 80% at 50% 100%,rgba(46,192,106,.05),transparent 62%),var(--pitch-deep);}
-.wc-br2-viewport:active{cursor:grabbing;}
+.wc-br2-viewport{position:relative;overflow:hidden;height:min(74vh,680px);min-height:320px;border:1px solid var(--pitch-line);border-radius:16px;background:radial-gradient(120% 80% at 50% 0%,rgba(77,139,255,.07),transparent 60%),radial-gradient(120% 80% at 50% 100%,rgba(46,192,106,.06),transparent 62%),var(--pitch-deep);}
 .wc-br2{display:flex;width:max-content;align-items:stretch;padding:.5rem .8rem;--g:.7rem;--ln:rgba(27,34,48,.24);}
 .wc-br2-col{display:flex;flex-direction:column;flex:0 0 auto;width:116px;}
 /* zoom controls + hint */
@@ -5063,12 +4983,18 @@ const CSS = `
 .wc-br2-zpct{min-width:2.7rem;border:none;background:transparent;color:var(--chalk-dim);font-size:.64rem;font-weight:700;font-family:'JetBrains Mono',monospace;cursor:pointer;padding:0 .15rem;}
 .wc-br2-zpct:hover{color:var(--chalk);}
 .wc-br2-hint{display:flex;align-items:center;justify-content:center;gap:.35rem;margin-top:.5rem;font-size:.64rem;color:var(--chalk-dim);text-align:center;}
-/* level-of-detail: hide footer when small, drop to flags-only when fully zoomed out */
+/* level-of-detail: full = everything; compact drops the footer; flags shows the two flags
+   side-by-side in shorter rows, so with less detail the whole tree scales up bigger + clearer. */
 .wc-br2[data-lod="mini"] .wc-br2-foot{display:none;}
+.wc-br2[data-lod="mini"] .wc-br2-match{min-height:40px;}
 .wc-br2[data-lod="flags"] .wc-br2-foot,.wc-br2[data-lod="flags"] .wc-br2-name,.wc-br2[data-lod="flags"] .wc-br2-score{display:none;}
-.wc-br2[data-lod="flags"] .wc-br2-team{justify-content:center;gap:.15rem;}
-.wc-br2[data-lod="flags"] .wc-br2-card{align-items:center;}
-.wc-br2[data-lod="flags"] .wc-br2-flag,.wc-br2[data-lod="flags"] .wc-br2-flag-x{width:1.5rem;height:1.5rem;}
+.wc-br2[data-lod="flags"] .wc-br2-col{width:72px;}
+.wc-br2[data-lod="flags"] .wc-br2-match{min-height:38px;}
+.wc-br2[data-lod="flags"] .wc-br2-card{align-items:center;padding:.2rem;}
+.wc-br2[data-lod="flags"] .wc-br2-teams{gap:.18rem;}
+.wc-br2[data-lod="flags"] .wc-br2-team{justify-content:center;gap:0;}
+.wc-br2[data-lod="flags"] .wc-br2-flag,.wc-br2[data-lod="flags"] .wc-br2-flag-x{width:1.25rem;height:1.25rem;}
+.wc-br2[data-lod="flags"] .wc-br2-win .wc-br2-flag{box-shadow:0 0 0 2px var(--gold);border-radius:3px;}
 .wc-br2-head{height:1.6rem;display:flex;align-items:center;justify-content:center;font-family:'Anton',sans-serif;letter-spacing:.02em;font-size:.62rem;text-transform:uppercase;color:var(--gold);text-align:center;}
 .wc-br2-body{flex:1;display:flex;flex-direction:column;}
 .wc-br2-match{flex:1;display:flex;flex-direction:column;justify-content:center;position:relative;padding:.22rem var(--g);min-height:44px;}
