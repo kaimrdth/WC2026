@@ -2068,7 +2068,7 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
             onClick={()=>setDetail(d=>Math.min(2,d+1))}><Plus size={15}/></button>
         </div>
       </div>
-      <div className="wc-br2-hint"><Info size={12}/> Whole bracket, always in view · use −/＋ for more or less detail · tap a match for details</div>
+      <div className="wc-br2-hint"><Info size={12}/> Whole bracket in view · −/＋ for detail · tap a match</div>
       {byId["ko-3P-1"]&&(
         <div className="wc-br2-third">
           <div className="wc-br2-head">Third-place play-off</div>
@@ -4082,7 +4082,10 @@ function LooseBall({seed,onClose}:{seed:number;onClose:()=>void}) {
       if(s.y<pad){s.y=pad;s.vy=Math.abs(s.vy)*.72;}
       if(s.y>maxY){s.y=maxY;s.vy=-Math.abs(s.vy)*.78;s.vx*=.94;if(Math.abs(s.vy)<1.1)s.vy=-5.8;}
       s.rot+=s.vx*2.1*dt;
-      if(ballRef.current) ballRef.current.style.transform=`translate3d(${s.x}px,${s.y}px,0) rotate(${s.rot}deg)`;
+      // Translate the ball (the shadow rides on this, so it stays cast straight down); the
+      // emoji spins inside via --rot, so the drop-shadow doesn't swing around with it.
+      const b=ballRef.current;
+      if(b){ b.style.transform=`translate3d(${s.x}px,${s.y}px,0)`; b.style.setProperty("--rot",`${s.rot}deg`); }
       raf=requestAnimationFrame(step);
     };
 
@@ -4752,12 +4755,12 @@ const CSS = `
 .wc-loose-ball{
   position:fixed;left:0;top:0;z-index:70;width:52px;height:52px;border-radius:999px;
   display:flex;align-items:center;justify-content:center;padding:0;border:none;
-  background:transparent;box-shadow:none;text-shadow:0 10px 22px rgba(0,0,0,.38);
+  background:transparent;box-shadow:none;filter:drop-shadow(0 9px 12px rgba(0,0,0,.4));
   font-size:42px;line-height:1;
   cursor:grab;touch-action:none;will-change:transform;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
 }
 .wc-loose-ball:active{cursor:grabbing;}
-.wc-loose-ball-emoji{display:block;pointer-events:none;user-select:none;-webkit-user-select:none;}
+.wc-loose-ball-emoji{display:block;transform:rotate(var(--rot,0deg));will-change:transform;pointer-events:none;user-select:none;-webkit-user-select:none;}
 @media(max-width:520px){.wc-loose-ball{width:42px;height:42px;font-size:34px;}}
 @media(prefers-reduced-motion:reduce){.wc-loose-ball{display:none;}}
 /* Ball mode: cursor becomes a running shoe (you're kicking the ball around). */
@@ -4978,7 +4981,7 @@ const CSS = `
 .wc-br2-col{display:flex;flex-direction:column;flex:0 0 auto;width:116px;}
 /* zoom controls + hint */
 .wc-br2-zoom{position:absolute;right:.6rem;bottom:.6rem;z-index:5;display:flex;align-items:center;gap:.15rem;background:rgba(12,15,22,.74);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid var(--pitch-line);border-radius:999px;padding:.22rem;}
-.wc-br2-zbtn{display:inline-flex;align-items:center;justify-content:center;width:1.7rem;height:1.7rem;border-radius:999px;border:none;background:transparent;color:var(--chalk);cursor:pointer;transition:background .15s;}
+.wc-br2-zbtn{display:inline-flex;align-items:center;justify-content:center;width:2.35rem;height:2.35rem;border-radius:999px;border:none;background:transparent;color:var(--chalk);cursor:pointer;transition:background .15s;}
 .wc-br2-zbtn:hover{background:rgba(255,255,255,.12);}
 .wc-br2-zpct{min-width:2.7rem;border:none;background:transparent;color:var(--chalk-dim);font-size:.64rem;font-weight:700;font-family:'JetBrains Mono',monospace;cursor:pointer;padding:0 .15rem;}
 .wc-br2-zpct:hover{color:var(--chalk);}
@@ -5255,8 +5258,11 @@ const CSS = `
   .wc-match-body{gap:.3rem;}
   .wc-match-flag{width:1.2rem;height:1.2rem;}
   .wc-match-name{font-size:.72rem;}
-  .wc-step-btn{width:1.7rem;height:1.7rem;}
   .wc-stat-strip{gap:1rem;}
+
+  /* hero: actions drop to their own row so they never crowd the wordmark */
+  .wc-hero-top{align-items:flex-start;}
+  .wc-hero-actions{width:100%;}
 
   /* nav: stack the two groups full-width; flow buttons form a tidy 2×2 grid */
   .wc-nav{gap:.5rem;}
