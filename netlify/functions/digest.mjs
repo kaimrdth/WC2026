@@ -35,7 +35,8 @@ Do NOT open with a greeting or the time of day — the app prepends that. Start 
 The facts include a "Focus:" line telling you the day's situation — follow it:
 - If there are matches today, lead with the biggest storyline (a live game, a major result, or a standings swing), then what's still to come today and what's at stake.
 - If there are no matches today, recap the most recent results (and what they did to the table), then nod to what's coming up next.
-Use ONLY the facts provided. Never invent scores, scorers, results, or fixtures. If a fact isn't given, don't state it.`;
+Use ONLY the facts provided. Never invent scores, scorers, results, or fixtures. If a fact isn't given, don't state it.
+The facts may include a "WORLD CUP BUZZ" section of press headlines. These are media chatter and opinion, NOT results — you may use at most ONE of them, woven in as atmosphere or a knowing aside (e.g. a quote or storyline), only if it fits naturally and never as an established fact. Never let buzz contradict the actual scores, and skip it entirely if it doesn't add anything.`;
 
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 

@@ -609,6 +609,26 @@ async function fetchLiveData(): Promise<LiveData> {
   return { results, koResults, goals, cards, matchesPlayed, eventIds, liveGames, koTeams };
 }
 
+// ESPN's World Cup news feed — editorial headlines used purely as atmosphere/colour in the
+// daily digest (never as match facts). We drop boilerplate "how to watch / kick-off time"
+// previews and keep the headlines with actual storylines.
+interface NewsItem { headline:string; description:string; }
+const NEWS_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/news";
+async function fetchNews(): Promise<NewsItem[]> {
+  const r = await fetch(NEWS_URL);
+  if (!r.ok) throw new Error(`news ${r.status}`);
+  const d = await r.json();
+  const skip = /how to watch|kick-?off time|how to stream|team news, how|where to watch|predicted (line-?up|xi)/i;
+  const out: NewsItem[] = [];
+  for (const a of (d.articles ?? []) as any[]) {
+    const headline = String(a.headline ?? "").trim();
+    if (!headline || skip.test(headline)) continue;
+    out.push({ headline, description: String(a.description ?? "").trim() });
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
 // Fixtures whose real kickoff window overlaps `now` — used to decide when to poll
 // for live games (so we only hit the network during plausible match windows).
 const LIVE_WINDOW_MS = 150 * 60 * 1000; // ~2.5h covers 90' + stoppage + half-time
@@ -3428,7 +3448,7 @@ const longDate=(iso:string|number)=>new Date(iso).toLocaleDateString(undefined,{
 // Builds the plain-text tournament state the model narrates from. Picks the focus
 // automatically: today's games if there are any (live, done, or upcoming); otherwise
 // the most recent matchday's results plus the next fixtures to come.
-function buildDigestFacts(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>, liveGames:LiveGame[], koTeams:Record<string,{homeCode:string;awayCode:string}>={}):string {
+function buildDigestFacts(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>, liveGames:LiveGame[], koTeams:Record<string,{homeCode:string;awayCode:string}>={}, news:NewsItem[]=[]):string {
   const nm=(c:string)=>TEAM_BY_CODE[c]?.name??c;
   const now=Date.now();
   const today=localDayKey(new Date());
@@ -3515,6 +3535,10 @@ function buildDigestFacts(groupResults:Record<string,ScoreResult>, koResults:Rec
     standings.push(`- Group ${L}: 1) ${s[0].name} ${s[0].pts}pts (${s[0].win}-${s[0].draw}-${s[0].loss}), 2) ${s[1].name} ${s[1].pts}pts; bottom: ${s[3].name} ${s[3].pts}pts`);
   }
   if(standings.length){ lines.push("CURRENT GROUP STANDINGS:"); lines.push(...standings); }
+  if(news.length){
+    lines.push("WORLD CUP BUZZ (press headlines — media chatter/opinion for colour only, NOT match facts; use at most one, never as established fact, never to contradict the scores):");
+    for(const n of news.slice(0,4)) lines.push(`- ${n.headline}${n.description?` — ${n.description}`:""}`);
+  }
   return lines.join("\n");
 }
 
@@ -3892,8 +3916,8 @@ function Typewriter({text,onSelectTeam,onSelectGroup,onMatch,hasMatch,speed=16,a
   return <>{text.slice(0,n)}<span className="wc-caret"/></>;
 }
 
-function DigestPanel({groupResults,koResults,koTeams,liveGames,matchesPlayed,detailIds,onSelectTeam,onSelectGroup,onOpenPreview,onOpenDetail,onPreviewKo}:{
-  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;koTeams:Record<string,{homeCode:string;awayCode:string}>;liveGames:LiveGame[];matchesPlayed:number;detailIds:Set<string>;
+function DigestPanel({groupResults,koResults,koTeams,liveGames,news,matchesPlayed,detailIds,onSelectTeam,onSelectGroup,onOpenPreview,onOpenDetail,onPreviewKo}:{
+  groupResults:Record<string,ScoreResult>;koResults:Record<string,KoResult>;koTeams:Record<string,{homeCode:string;awayCode:string}>;liveGames:LiveGame[];news:NewsItem[];matchesPlayed:number;detailIds:Set<string>;
   onSelectTeam:(code:string)=>void;onSelectGroup:(letter:string)=>void;
   onOpenPreview:(id:string)=>void;onOpenDetail:(id:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
@@ -3901,7 +3925,7 @@ function DigestPanel({groupResults,koResults,koTeams,liveGames,matchesPlayed,det
   const [text,setText]=useState("");
   const [status,setStatus]=useState<"idle"|"loading"|"error">("idle");
   const [err,setErr]=useState("");
-  const facts=useMemo(()=>buildDigestFacts(groupResults,koResults,liveGames,koTeams),[groupResults,koResults,liveGames,koTeams]);
+  const facts=useMemo(()=>buildDigestFacts(groupResults,koResults,liveGames,koTeams,news),[groupResults,koResults,liveGames,koTeams,news]);
   // Match-link wiring: a referenced matchup opens its preview (upcoming) or details (played/live).
   const koMatchups=useMemo(()=>resolveKnockout(groupResults,koResults,koTeams),[groupResults,koResults,koTeams]);
   const koMatchOf=useCallback((a:string,b:string)=>koMatchups.find(m=>{const c=[m.home.team?.code,m.away.team?.code];return c.includes(a)&&c.includes(b);})??null,[koMatchups]);
@@ -4149,6 +4173,15 @@ export default function App() {
   const [liveEventIds,setLiveEventIds]=useState<Record<string,string>>(()=>loadStore("wc26_eventids"));
   const [liveGames,setLiveGames]=useState<LiveGame[]>([]);
   const [updatedAt,setUpdatedAt]=useState<number|null>(null);
+  // ESPN news headlines — slow-changing editorial colour for the daily digest.
+  const [news,setNews]=useState<NewsItem[]>([]);
+  useEffect(()=>{
+    let alive=true;
+    const load=()=>{ if(!DIGEST_ENABLED) return; fetchNews().then(n=>{ if(alive) setNews(n); }).catch(()=>{}); };
+    load();
+    const id=window.setInterval(load,20*60*1000); // refresh ~every 20 min
+    return ()=>{ alive=false; window.clearInterval(id); };
+  },[]);
 
   // Global "minimize all AI digests" preference (daily digest + every micro-digest), persisted.
   const [digestsMin,setDigestsMin]=useState<boolean>(()=>{ try{ return localStorage.getItem("wc26_digests_min")==="1"; }catch{ return false; } });
@@ -4359,7 +4392,7 @@ export default function App() {
         </div>
       </header>
 
-      {DIGEST_ENABLED&&<DigestPanel groupResults={groupResults} koResults={koResults} koTeams={koTeams} liveGames={liveGames} matchesPlayed={liveMatchesPlayed} detailIds={detailIds}
+      {DIGEST_ENABLED&&<DigestPanel groupResults={groupResults} koResults={koResults} koTeams={koTeams} liveGames={liveGames} news={news} matchesPlayed={liveMatchesPlayed} detailIds={detailIds}
         onSelectTeam={goToTeam} onSelectGroup={goToGroup}
         onOpenPreview={setPreviewId} onOpenDetail={setDetailId} onPreviewKo={(a,b,fixture)=>setKoPreview({a,b,fixture})}/>}
 
