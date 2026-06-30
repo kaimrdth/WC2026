@@ -3419,6 +3419,19 @@ function buildDigestFacts(groupResults:Record<string,ScoreResult>, koResults:Rec
     return [k?.home.team?.name ?? k?.home.label ?? "TBD", k?.away.team?.name ?? k?.away.label ?? "TBD"];
   };
   const byKickoff=allMatches.sort((a,b)=>ms(a)-ms(b));
+  // A finished scoreline. Knockout games can't draw: if level it's settled on penalties,
+  // so spell out the shootout and who advanced — otherwise the AI reads "1-1" as a draw.
+  const scoreText=(f:Fixture|KoFixture,r:ScoreResult,h:string,a:string)=>{
+    let s=`${h} ${r.homeGoals}-${r.awayGoals} ${a}`;
+    if(!("group" in f)){
+      if(r.pkHome!=null&&r.pkAway!=null&&r.homeGoals===r.awayGoals){
+        s+=` — ${r.pkHome}-${r.pkAway} on penalties (${r.pkHome>r.pkAway?h:a} advance)`;
+      }else if(r.homeGoals!==r.awayGoals){
+        s+=` (${r.homeGoals>r.awayGoals?h:a} advance)`;
+      }
+    }
+    return s;
+  };
 
   const todayFx=byKickoff.filter(f=>localDayKey(new Date(f.kickoff))===today);
   const todayDone=todayFx.filter(f=>resultFor(f)&&!liveIds.has(f.id));
@@ -3428,6 +3441,7 @@ function buildDigestFacts(groupResults:Record<string,ScoreResult>, koResults:Rec
   const lines:string[]=[];
   lines.push(`Today's date: ${new Date().toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"})}`);
   lines.push(`Focus: ${hasGamesToday?"there are matches today — lead with them":"no matches today — recap the most recent results and preview what's next"}.`);
+  if(Object.keys(koResults).length) lines.push("Note: this is the knockout stage — matches cannot end in a draw. A level score is settled on penalties, so a shootout is dramatic; report who advanced and lean into that tension, never call a level knockout score a draw.");
 
   if(liveGames.length){
     lines.push("LIVE RIGHT NOW:");
@@ -3441,7 +3455,7 @@ function buildDigestFacts(groupResults:Record<string,ScoreResult>, koResults:Rec
   if(hasGamesToday){
     if(todayDone.length){
       lines.push("TODAY'S COMPLETED RESULTS:");
-      for(const f of todayDone){ const r=resultFor(f)!; const [h,a]=namesFor(f); lines.push(`- ${h} ${r.homeGoals}-${r.awayGoals} ${a} (${labelFor(f)})`); }
+      for(const f of todayDone){ const r=resultFor(f)!; const [h,a]=namesFor(f); lines.push(`- ${scoreText(f,r,h,a)} (${labelFor(f)})`); }
     }
     if(todayNext.length){
       lines.push("STILL TO COME TODAY:");
@@ -3454,7 +3468,7 @@ function buildDigestFacts(groupResults:Record<string,ScoreResult>, koResults:Rec
       const lastDay=localDayKey(new Date(done[done.length-1].kickoff));
       const lastDayFx=done.filter(f=>localDayKey(new Date(f.kickoff))===lastDay);
       lines.push(`MOST RECENT RESULTS (${longDate(lastDayFx[lastDayFx.length-1].kickoff)}):`);
-      for(const f of lastDayFx){ const r=resultFor(f)!; const [h,a]=namesFor(f); lines.push(`- ${h} ${r.homeGoals}-${r.awayGoals} ${a} (${labelFor(f)})`); }
+      for(const f of lastDayFx){ const r=resultFor(f)!; const [h,a]=namesFor(f); lines.push(`- ${scoreText(f,r,h,a)} (${labelFor(f)})`); }
     }
     const upcoming=byKickoff.filter(f=>!resultFor(f)&&!liveIds.has(f.id)&&ms(f)>=now);
     if(upcoming.length){
@@ -3484,7 +3498,9 @@ function digestSignature(groupResults:Record<string,ScoreResult>, koResults:Reco
   const live=liveGames.map(g=>`L:${g.fixtureId}:${g.homeGoals}-${g.awayGoals}`).sort();
   const done=Object.keys(groupResults).sort().map(id=>`R:${id}:${groupResults[id].homeGoals}-${groupResults[id].awayGoals}`);
   const ko=Object.keys(koResults).sort().map(id=>`K:${id}:${koResults[id].homeCode}-${koResults[id].awayCode}:${koResults[id].homeGoals}-${koResults[id].awayGoals}:${koResults[id].pkHome??""}-${koResults[id].pkAway??""}`);
-  return [localDayKey(new Date()),...live,...done,...ko].join("|");
+  // Bump FACTS_VER when the facts format changes so stale cached digests are invalidated
+  // (v2: knockout scorelines now spell out penalty shootouts + who advanced).
+  return ["v2",localDayKey(new Date()),...live,...done,...ko].join("|");
 }
 function digestCacheKey(sig:string):string{
   let h=5381; for(let i=0;i<sig.length;i++) h=((h<<5)+h+sig.charCodeAt(i))|0;
@@ -3696,7 +3712,12 @@ function fallbackDigest(groupResults:Record<string,ScoreResult>, koResults:Recor
     const k=koById[f.id]; return [k?.home.team?.name ?? k?.home.label ?? "TBD", k?.away.team?.name ?? k?.away.label ?? "TBD"];
   };
   const byKickoff=allMatches.sort((a,b)=>ms(a)-ms(b));
-  const res=(f:Fixture|KoFixture)=>{const r=resultFor(f)!; const [h,a]=namesFor(f); return `${h} ${r.homeGoals}–${r.awayGoals} ${a}`;};
+  const res=(f:Fixture|KoFixture)=>{
+    const r=resultFor(f)!; const [h,a]=namesFor(f);
+    let s=`${h} ${r.homeGoals}–${r.awayGoals} ${a}`;
+    if(!("group" in f)&&r.pkHome!=null&&r.pkAway!=null&&r.homeGoals===r.awayGoals) s+=` (${r.pkHome}–${r.pkAway} pens, ${r.pkHome>r.pkAway?h:a} through)`;
+    return s;
+  };
   const fix=(f:Fixture|KoFixture)=>{const [h,a]=namesFor(f); return `${h} v ${a} (${formatKickoff(f.kickoff).time})`;};
   const out:string[]=[];
   if(liveGames.length) out.push(`Live now: ${liveGames.map(g=>`${nm(g.homeCode)} ${g.homeGoals}–${g.awayGoals} ${nm(g.awayCode)} (${g.clock||g.status})`).join("; ")}.`);
