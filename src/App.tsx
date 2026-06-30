@@ -4340,7 +4340,6 @@ export default function App() {
           <div>
             <div className="wc-hero-kicker">UNITED STATES · MEXICO · CANADA</div>
             <h1 className="wc-hero-title"><button className="wc-hero-title-btn" onClick={tapTitle} type="button">World Cup 2026</button></h1>
-            <div className="wc-hero-sub">Live scores, standings, and stats — updating automatically as matches are played.</div>
           </div>
           <div className="wc-hero-actions">
             {liveStatus==="loading"
@@ -4503,12 +4502,12 @@ const CSS = `
   /* three host-colour blobs drifting across the wordmark on criss-crossing, eased, irregular
      paths (different sizes + periods) so the swirl reads organic and never obviously repeats. */
   background-image:
-    radial-gradient(38% 80% at 50% 50%, rgba(232,52,58,.92), transparent 58%),
-    radial-gradient(42% 86% at 50% 50%, rgba(20,170,90,.88), transparent 58%),
-    radial-gradient(36% 78% at 50% 50%, rgba(96,170,255,1), transparent 58%),
-    linear-gradient(var(--chalk),var(--chalk));
+    radial-gradient(46% 88% at 50% 50%, rgba(232,52,58,.95), transparent 72%),
+    radial-gradient(50% 92% at 50% 50%, rgba(34,194,108,.92), transparent 72%),
+    radial-gradient(46% 88% at 50% 50%, rgba(120,186,255,1), transparent 74%),
+    linear-gradient(#4b5566,#4b5566);
   background-repeat:no-repeat;
-  background-size:170% 150%,150% 170%,185% 160%,100% 100%;
+  background-size:190% 165%,170% 195%,205% 180%,100% 100%;
   -webkit-background-clip:text;background-clip:text;
   -webkit-text-fill-color:transparent;color:transparent;
   animation:wc-trionda 17s ease-in-out infinite;}
