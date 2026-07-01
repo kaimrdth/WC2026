@@ -974,10 +974,9 @@ const KO_SF1=KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1);
 // In-order DFS from a root fixture → each round's fixtures top→bottom (feeders adjacent).
 // `feeders` is injectable so the bracket can link R16→R32 by who ACTUALLY advanced (ESPN's
 // real matchups) rather than our hardcoded group-slot guesses, which reality often violates.
-function koOrderFrom(root:KoFixture|undefined, feeders:(f:KoFixture)=>(KoFixture|undefined)[]=koFeeders):Record<string,string[]>{
+function koOrderFrom(root:KoFixture|undefined, feeders:(f:KoFixture)=>(KoFixture|undefined)[]=koFeeders, seen:Set<string>=new Set()):Record<string,string[]>{
   const order:Record<string,string[]>={R32:[],R16:[],QF:[],SF:[]};
   if(!root) return order;
-  const seen=new Set<string>();
   const visit=(f:KoFixture)=>{ if(seen.has(f.id))return; seen.add(f.id); const [h,a]=feeders(f); if(h)visit(h); (order[f.round] ||= []).push(f.id); if(a)visit(a); };
   visit(root);
   return order;
@@ -1056,7 +1055,11 @@ function resolveKnockout(groupResults:Record<string,ScoreResult>, koResults:Reco
     if(result) return { fixture:f, home:teamSide(result.homeCode,shortSlot(f.homeSlot)), away:teamSide(result.awayCode,shortSlot(f.awaySlot)) };
     const set=koTeams[f.id];
     if(set) return { fixture:f, home:teamSide(set.homeCode,shortSlot(f.homeSlot)), away:teamSide(set.awayCode,shortSlot(f.awaySlot)) };
-    return { fixture:f, home:resolveKoSlot(f.homeSlot,standings,koResults), away:resolveKoSlot(f.awaySlot,standings,koResults) };
+    // Only project R32 from the group standings. R16+ "Round of X N Winner" projections rely on
+    // hardcoded feeder assumptions that reality often violates (they put teams in the wrong slot),
+    // so we show TBD there until ESPN sets the real matchup rather than displaying a wrong team.
+    if(f.round==="R32") return { fixture:f, home:resolveKoSlot(f.homeSlot,standings,koResults), away:resolveKoSlot(f.awaySlot,standings,koResults) };
+    return { fixture:f, home:teamSide(null,shortSlot(f.homeSlot)), away:teamSide(null,shortSlot(f.awaySlot)) };
   });
 }
 
@@ -2022,13 +2025,21 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
   const {LEFT,RIGHT}=useMemo(()=>{
     const r32ByWinner:Record<string,string>={};
     for(const f of KO_FIXTURES) if(f.round==="R32"){ const w=koWinnerCode(koResults[f.id]); if(w) r32ByWinner[w]=f.id; }
-    const r16Dyn:Record<string,(KoFixture|undefined)[]>={}; let allOk=true;
+    // Build a clean partition of the 16 R32 fixtures across the 8 R16s: real R16s (teams known)
+    // claim the exact R32s their teams won; the leftover R32s are handed out to the still-TBD R16s.
+    // This keeps every R32 present exactly once no matter how the real matchups cut across our
+    // hardcoded slot guesses (which reality violates).
+    const r16feeders:Record<string,string[]>={}; const claimed=new Set<string>(); const tbd:string[]=[];
     for(const f of KO_FIXTURES) if(f.round==="R16"){
       const m=byId[f.id]; const hc=m?.home.team?.code, ac=m?.away.team?.code;
       const hf=hc?r32ByWinner[hc]:undefined, af=ac?r32ByWinner[ac]:undefined;
-      if(hf&&af&&hf!==af) r16Dyn[f.id]=[KO_FIXTURE_BY_ID[hf],KO_FIXTURE_BY_ID[af]]; else allOk=false;
+      if(hf&&af&&hf!==af){ r16feeders[f.id]=[hf,af]; claimed.add(hf); claimed.add(af); }
+      else tbd.push(f.id);
     }
-    const feeders=(f:KoFixture):(KoFixture|undefined)[]=> (allOk&&f.round==="R16"&&r16Dyn[f.id]) ? r16Dyn[f.id] : koFeeders(f);
+    const remaining=KO_FIXTURES.filter(f=>f.round==="R32"&&!claimed.has(f.id)).map(f=>f.id);
+    let i=0; for(const id of tbd){ r16feeders[id]=[remaining[i++],remaining[i++]]; }
+    const feeders=(f:KoFixture):(KoFixture|undefined)[]=>
+      (f.round==="R16"&&r16feeders[f.id]) ? r16feeders[f.id].map(id=>id?KO_FIXTURE_BY_ID[id]:undefined) : koFeeders(f);
     return { LEFT:koOrderFrom(KO_SF2,feeders), RIGHT:koOrderFrom(KO_SF1,feeders) };
   },[byId,koResults]);
   const viewportRef=useRef<HTMLDivElement|null>(null);
