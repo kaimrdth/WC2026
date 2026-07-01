@@ -969,18 +969,19 @@ const KO_BY_WINNER_SLOT:Record<string,KoFixture>=Object.fromEntries(
   KO_FIXTURES.filter(f=>KO_WINNER_PREFIX[f.round]).map(f=>[`${KO_WINNER_PREFIX[f.round]} ${f.n} Winner`,f])
 );
 const koFeeders=(f:KoFixture):(KoFixture|undefined)[]=>[KO_BY_WINNER_SLOT[f.homeSlot],KO_BY_WINNER_SLOT[f.awaySlot]];
+const KO_SF2=KO_FIXTURES.find(f=>f.round==="SF"&&f.n===2);
+const KO_SF1=KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1);
 // In-order DFS from a root fixture → each round's fixtures top→bottom (feeders adjacent).
-function koOrderFrom(root:KoFixture|undefined):Record<string,string[]>{
+// `feeders` is injectable so the bracket can link R16→R32 by who ACTUALLY advanced (ESPN's
+// real matchups) rather than our hardcoded group-slot guesses, which reality often violates.
+function koOrderFrom(root:KoFixture|undefined, feeders:(f:KoFixture)=>(KoFixture|undefined)[]=koFeeders):Record<string,string[]>{
   const order:Record<string,string[]>={R32:[],R16:[],QF:[],SF:[]};
   if(!root) return order;
   const seen=new Set<string>();
-  const visit=(f:KoFixture)=>{ if(seen.has(f.id))return; seen.add(f.id); const [h,a]=koFeeders(f); if(h)visit(h); (order[f.round] ||= []).push(f.id); if(a)visit(a); };
+  const visit=(f:KoFixture)=>{ if(seen.has(f.id))return; seen.add(f.id); const [h,a]=feeders(f); if(h)visit(h); (order[f.round] ||= []).push(f.id); if(a)visit(a); };
   visit(root);
   return order;
 }
-// The two halves of the bracket = the two semifinal sub-trees (from the official draw).
-const LEFT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===2));
-const RIGHT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1));
 const TEAM_BY_NAME:Record<string,Team>=Object.fromEntries(TEAMS.map(t=>[t.name,t]));
 
 function matchInfoFor(id:string, koResults:Record<string,KoResult>, liveByFixture:Record<string,LiveGame>):MatchInfo|null{
@@ -2015,6 +2016,21 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
   const byId=useMemo(()=>Object.fromEntries(ko.map(m=>[m.fixture.id,m])) as Record<string,ResolvedKo>,[ko]);
+  // Column ordering. Link each R16 to the two R32 fixtures its ACTUAL teams won (ESPN's real
+  // bracket), falling back to the hardcoded group-slot feeders until every R16 is resolvable
+  // (all-or-nothing, so an R32 can't end up duplicated or dropped mid-round).
+  const {LEFT,RIGHT}=useMemo(()=>{
+    const r32ByWinner:Record<string,string>={};
+    for(const f of KO_FIXTURES) if(f.round==="R32"){ const w=koWinnerCode(koResults[f.id]); if(w) r32ByWinner[w]=f.id; }
+    const r16Dyn:Record<string,(KoFixture|undefined)[]>={}; let allOk=true;
+    for(const f of KO_FIXTURES) if(f.round==="R16"){
+      const m=byId[f.id]; const hc=m?.home.team?.code, ac=m?.away.team?.code;
+      const hf=hc?r32ByWinner[hc]:undefined, af=ac?r32ByWinner[ac]:undefined;
+      if(hf&&af&&hf!==af) r16Dyn[f.id]=[KO_FIXTURE_BY_ID[hf],KO_FIXTURE_BY_ID[af]]; else allOk=false;
+    }
+    const feeders=(f:KoFixture):(KoFixture|undefined)[]=> (allOk&&f.round==="R16"&&r16Dyn[f.id]) ? r16Dyn[f.id] : koFeeders(f);
+    return { LEFT:koOrderFrom(KO_SF2,feeders), RIGHT:koOrderFrom(KO_SF1,feeders) };
+  },[byId,koResults]);
   const viewportRef=useRef<HTMLDivElement|null>(null);
   const contentRef=useRef<HTMLDivElement|null>(null);
   const autoSet=useRef(false);
@@ -2067,18 +2083,18 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
       <div className="wc-br2-viewport" ref={viewportRef}>
         <div className="wc-br2" ref={contentRef} data-lod={BR_DETAIL[detail]}
           style={{transform:`translate(${fit.x}px,${fit.y}px) scale(${fit.scale})`,transformOrigin:"0 0",transition:"transform .25s ease"}}>
-          {col("R32",LEFT_ORDER.R32,"l","src",false)}
-          {col("R16",LEFT_ORDER.R16,"l","src",true)}
-          {col("QF",LEFT_ORDER.QF,"l","src",true)}
-          {col("SF",LEFT_ORDER.SF,"l","single",true)}
+          {col("R32",LEFT.R32,"l","src",false)}
+          {col("R16",LEFT.R16,"l","src",true)}
+          {col("QF",LEFT.QF,"l","src",true)}
+          {col("SF",LEFT.SF,"l","single",true)}
           <div className="wc-br2-col wc-br2-c wc-br2-final">
             <div className="wc-br2-head">{KO_ROUND_LABEL.F}</div>
             <div className="wc-br2-body">{cardFor("ko-F-1")}</div>
           </div>
-          {col("SF",RIGHT_ORDER.SF,"r","single",true)}
-          {col("QF",RIGHT_ORDER.QF,"r","src",true)}
-          {col("R16",RIGHT_ORDER.R16,"r","src",true)}
-          {col("R32",RIGHT_ORDER.R32,"r","src",false)}
+          {col("SF",RIGHT.SF,"r","single",true)}
+          {col("QF",RIGHT.QF,"r","src",true)}
+          {col("R16",RIGHT.R16,"r","src",true)}
+          {col("R32",RIGHT.R32,"r","src",false)}
         </div>
         <div className="wc-br2-zoom" role="group" aria-label="Bracket detail level">
           <button type="button" className="wc-br2-zbtn" aria-label="Less detail" disabled={detail===0}
