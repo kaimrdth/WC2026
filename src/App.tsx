@@ -2023,23 +2023,31 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
   // bracket), falling back to the hardcoded group-slot feeders until every R16 is resolvable
   // (all-or-nothing, so an R32 can't end up duplicated or dropped mid-round).
   const {LEFT,RIGHT}=useMemo(()=>{
-    const r32ByWinner:Record<string,string>={};
-    for(const f of KO_FIXTURES) if(f.round==="R32"){ const w=koWinnerCode(koResults[f.id]); if(w) r32ByWinner[w]=f.id; }
-    // Build a clean partition of the 16 R32 fixtures across the 8 R16s: real R16s (teams known)
-    // claim the exact R32s their teams won; the leftover R32s are handed out to the still-TBD R16s.
-    // This keeps every R32 present exactly once no matter how the real matchups cut across our
-    // hardcoded slot guesses (which reality violates).
-    const r16feeders:Record<string,string[]>={}; const claimed=new Set<string>(); const tbd:string[]=[];
-    for(const f of KO_FIXTURES) if(f.round==="R16"){
-      const m=byId[f.id]; const hc=m?.home.team?.code, ac=m?.away.team?.code;
-      const hf=hc?r32ByWinner[hc]:undefined, af=ac?r32ByWinner[ac]:undefined;
-      if(hf&&af&&hf!==af){ r16feeders[f.id]=[hf,af]; claimed.add(hf); claimed.add(af); }
-      else tbd.push(f.id);
-    }
-    const remaining=KO_FIXTURES.filter(f=>f.round==="R32"&&!claimed.has(f.id)).map(f=>f.id);
-    let i=0; for(const id of tbd){ r16feeders[id]=[remaining[i++],remaining[i++]]; }
-    const feeders=(f:KoFixture):(KoFixture|undefined)[]=>
-      (f.round==="R16"&&r16feeders[f.id]) ? r16feeders[f.id].map(id=>id?KO_FIXTURE_BY_ID[id]:undefined) : koFeeders(f);
+    const winnerOf=(id:string)=>koWinnerCode(koResults[id]);
+    // For a round, link each fixture whose teams are KNOWN to the two previous-round fixtures its
+    // teams actually won (ESPN's real bracket), then hand leftover feeders to the still-TBD boxes
+    // so the round stays a clean partition (every feeder present once). If NO fixture in the round
+    // is decided yet, return {} so the correct hardcoded official skeleton (koFeeders) is used.
+    const partition=(round:string, prev:string):Record<string,string[]>=>{
+      const prevByWinner:Record<string,string>={};
+      for(const f of KO_FIXTURES) if(f.round===prev){ const w=winnerOf(f.id); if(w) prevByWinner[w]=f.id; }
+      const out:Record<string,string[]>={}; const claimed=new Set<string>(); const tbd:string[]=[];
+      for(const f of KO_FIXTURES) if(f.round===round){
+        const m=byId[f.id]; const hc=m?.home.team?.code, ac=m?.away.team?.code;
+        const hf=hc?prevByWinner[hc]:undefined, af=ac?prevByWinner[ac]:undefined;
+        if(hf&&af&&hf!==af){ out[f.id]=[hf,af]; claimed.add(hf); claimed.add(af); }
+        else tbd.push(f.id);
+      }
+      if(claimed.size===0) return {}; // whole round undecided → keep the hardcoded official skeleton
+      const remaining=KO_FIXTURES.filter(f=>f.round===prev&&!claimed.has(f.id)).map(f=>f.id);
+      let i=0; for(const id of tbd){ out[id]=[remaining[i++],remaining[i++]]; }
+      return out;
+    };
+    const parts:Record<string,Record<string,string[]>>={ R16:partition("R16","R32"), QF:partition("QF","R16"), SF:partition("SF","QF") };
+    const feeders=(f:KoFixture):(KoFixture|undefined)[]=>{
+      const p=parts[f.round];
+      return (p&&p[f.id]) ? p[f.id].map(id=>id?KO_FIXTURE_BY_ID[id]:undefined) : koFeeders(f);
+    };
     return { LEFT:koOrderFrom(KO_SF2,feeders), RIGHT:koOrderFrom(KO_SF1,feeders) };
   },[byId,koResults]);
   const viewportRef=useRef<HTMLDivElement|null>(null);
