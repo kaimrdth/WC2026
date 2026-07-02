@@ -955,14 +955,14 @@ const KO_FIXTURES: KoFixture[] = [
   { id:"ko-R32-14", round:"R32", n:14, kickoff:"2026-07-03T18:00Z", venue:"AT&T Stadium", city:"Arlington, Texas", homeSlot:"Group D 2nd Place", awaySlot:"Group G 2nd Place" },
   { id:"ko-R32-15", round:"R32", n:15, kickoff:"2026-07-03T22:00Z", venue:"Hard Rock Stadium", city:"Miami Gardens, Florida", homeSlot:"Group J Winner", awaySlot:"Group H 2nd Place" },
   { id:"ko-R32-16", round:"R32", n:16, kickoff:"2026-07-04T01:30Z", venue:"GEHA Field at Arrowhead Stadium", city:"Kansas City, Missouri", homeSlot:"Group K Winner", awaySlot:"Third Place Group D/E/I/J/L" },
-  { id:"ko-R16-1", round:"R16", n:1, kickoff:"2026-07-04T17:00Z", venue:"NRG Stadium", city:"Houston, Texas", homeSlot:"Round of 32 1 Winner", awaySlot:"Round of 32 3 Winner" },
-  { id:"ko-R16-2", round:"R16", n:2, kickoff:"2026-07-04T21:00Z", venue:"Lincoln Financial Field", city:"Philadelphia, Pennsylvania", homeSlot:"Round of 32 4 Winner", awaySlot:"Round of 32 2 Winner" },
-  { id:"ko-R16-3", round:"R16", n:3, kickoff:"2026-07-05T20:00Z", venue:"MetLife Stadium", city:"East Rutherford, New Jersey", homeSlot:"Round of 32 6 Winner", awaySlot:"Round of 32 5 Winner" },
-  { id:"ko-R16-4", round:"R16", n:4, kickoff:"2026-07-06T00:00Z", venue:"Estadio Banorte", city:"Mexico City", homeSlot:"Round of 32 7 Winner", awaySlot:"Round of 32 8 Winner" },
-  { id:"ko-R16-5", round:"R16", n:5, kickoff:"2026-07-06T19:00Z", venue:"AT&T Stadium", city:"Arlington, Texas", homeSlot:"Round of 32 12 Winner", awaySlot:"Round of 32 11 Winner" },
-  { id:"ko-R16-6", round:"R16", n:6, kickoff:"2026-07-07T00:00Z", venue:"Lumen Field", city:"Seattle, Washington", homeSlot:"Round of 32 9 Winner", awaySlot:"Round of 32 10 Winner" },
-  { id:"ko-R16-7", round:"R16", n:7, kickoff:"2026-07-07T16:00Z", venue:"Mercedes-Benz Stadium", city:"Atlanta, Georgia", homeSlot:"Round of 32 16 Winner", awaySlot:"Round of 32 14 Winner" },
-  { id:"ko-R16-8", round:"R16", n:8, kickoff:"2026-07-07T20:00Z", venue:"BC Place", city:"Vancouver", homeSlot:"Round of 32 13 Winner", awaySlot:"Round of 32 15 Winner" },
+  { id:"ko-R16-1", round:"R16", n:1, kickoff:"2026-07-04T17:00Z", venue:"NRG Stadium", city:"Houston, Texas", homeSlot:"Round of 32 1 Winner", awaySlot:"Round of 32 4 Winner" },
+  { id:"ko-R16-2", round:"R16", n:2, kickoff:"2026-07-04T21:00Z", venue:"Lincoln Financial Field", city:"Philadelphia, Pennsylvania", homeSlot:"Round of 32 3 Winner", awaySlot:"Round of 32 6 Winner" },
+  { id:"ko-R16-3", round:"R16", n:3, kickoff:"2026-07-05T20:00Z", venue:"MetLife Stadium", city:"East Rutherford, New Jersey", homeSlot:"Round of 32 13 Winner", awaySlot:"Round of 32 16 Winner" },
+  { id:"ko-R16-4", round:"R16", n:4, kickoff:"2026-07-06T00:00Z", venue:"Estadio Banorte", city:"Mexico City", homeSlot:"Round of 32 14 Winner", awaySlot:"Round of 32 15 Winner" },
+  { id:"ko-R16-5", round:"R16", n:5, kickoff:"2026-07-06T19:00Z", venue:"AT&T Stadium", city:"Arlington, Texas", homeSlot:"Round of 32 2 Winner", awaySlot:"Round of 32 5 Winner" },
+  { id:"ko-R16-6", round:"R16", n:6, kickoff:"2026-07-07T00:00Z", venue:"Lumen Field", city:"Seattle, Washington", homeSlot:"Round of 32 7 Winner", awaySlot:"Round of 32 8 Winner" },
+  { id:"ko-R16-7", round:"R16", n:7, kickoff:"2026-07-07T16:00Z", venue:"Mercedes-Benz Stadium", city:"Atlanta, Georgia", homeSlot:"Round of 32 9 Winner", awaySlot:"Round of 32 10 Winner" },
+  { id:"ko-R16-8", round:"R16", n:8, kickoff:"2026-07-07T20:00Z", venue:"BC Place", city:"Vancouver", homeSlot:"Round of 32 11 Winner", awaySlot:"Round of 32 12 Winner" },
   { id:"ko-QF-1", round:"QF", n:1, kickoff:"2026-07-09T20:00Z", venue:"Gillette Stadium", city:"Foxborough, Massachusetts", homeSlot:"Round of 16 1 Winner", awaySlot:"Round of 16 2 Winner" },
   { id:"ko-QF-2", round:"QF", n:2, kickoff:"2026-07-10T19:00Z", venue:"SoFi Stadium", city:"Inglewood, California", homeSlot:"Round of 16 5 Winner", awaySlot:"Round of 16 6 Winner" },
   { id:"ko-QF-3", round:"QF", n:3, kickoff:"2026-07-11T21:00Z", venue:"Hard Rock Stadium", city:"Miami Gardens, Florida", homeSlot:"Round of 16 3 Winner", awaySlot:"Round of 16 4 Winner" },
@@ -984,19 +984,21 @@ const KO_BY_WINNER_SLOT:Record<string,KoFixture>=Object.fromEntries(
   KO_FIXTURES.filter(f=>KO_WINNER_PREFIX[f.round]).map(f=>[`${KO_WINNER_PREFIX[f.round]} ${f.n} Winner`,f])
 );
 const koFeeders=(f:KoFixture):(KoFixture|undefined)[]=>[KO_BY_WINNER_SLOT[f.homeSlot],KO_BY_WINNER_SLOT[f.awaySlot]];
-const KO_SF2=KO_FIXTURES.find(f=>f.round==="SF"&&f.n===2);
-const KO_SF1=KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1);
-// In-order DFS from a root fixture → each round's fixtures top→bottom (feeders adjacent). `feeders`
-// is injectable so the bracket can link each round to the previous by who ACTUALLY advanced (from
-// ESPN's real matchups) rather than the hardcoded group-slot skeleton, which needs group standings
-// we may not have. A shared `seen` guarantees each fixture lands on exactly one side.
-function koOrderFrom(root:KoFixture|undefined, feeders:(f:KoFixture)=>(KoFixture|undefined)[]=koFeeders, seen:Set<string>=new Set()):Record<string,string[]>{
+// In-order DFS from a root fixture → each round's fixtures top→bottom (feeders adjacent). The R16
+// feeder pairs are the real 2026 draw (verified against ESPN's actual matchups by venue), and each
+// R32 match sits in its correct slot (venue/date), so this static skeleton lays out the whole
+// bracket correctly — no group standings needed.
+function koOrderFrom(root:KoFixture|undefined):Record<string,string[]>{
   const order:Record<string,string[]>={R32:[],R16:[],QF:[],SF:[]};
   if(!root) return order;
-  const visit=(f:KoFixture)=>{ if(seen.has(f.id))return; seen.add(f.id); const [h,a]=feeders(f); if(h)visit(h); (order[f.round] ||= []).push(f.id); if(a)visit(a); };
+  const seen=new Set<string>();
+  const visit=(f:KoFixture)=>{ if(seen.has(f.id))return; seen.add(f.id); const [h,a]=koFeeders(f); if(h)visit(h); (order[f.round] ||= []).push(f.id); if(a)visit(a); };
   visit(root);
   return order;
 }
+// The two halves of the bracket = the two semifinal sub-trees (from the official draw).
+const LEFT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===2));
+const RIGHT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1));
 const TEAM_BY_NAME:Record<string,Team>=Object.fromEntries(TEAMS.map(t=>[t.name,t]));
 
 function matchInfoFor(id:string, koResults:Record<string,KoResult>, liveByFixture:Record<string,LiveGame>):MatchInfo|null{
@@ -1071,11 +1073,7 @@ function resolveKnockout(groupResults:Record<string,ScoreResult>, koResults:Reco
     if(result) return { fixture:f, home:teamSide(result.homeCode,shortSlot(f.homeSlot)), away:teamSide(result.awayCode,shortSlot(f.awaySlot)) };
     const set=koTeams[f.id];
     if(set) return { fixture:f, home:teamSide(set.homeCode,shortSlot(f.homeSlot)), away:teamSide(set.awayCode,shortSlot(f.awaySlot)) };
-    // Only the R32 can be projected reliably (group slots). R16+ "Round of X N Winner" projections
-    // need the correct bracket placement, which itself relies on group standings we may not have —
-    // so show TBD there until ESPN sets the real matchup, rather than a wrong team.
-    if(f.round==="R32") return { fixture:f, home:resolveKoSlot(f.homeSlot,standings,koResults), away:resolveKoSlot(f.awaySlot,standings,koResults) };
-    return { fixture:f, home:teamSide(null,shortSlot(f.homeSlot)), away:teamSide(null,shortSlot(f.awaySlot)) };
+    return { fixture:f, home:resolveKoSlot(f.homeSlot,standings,koResults), away:resolveKoSlot(f.awaySlot,standings,koResults) };
   });
 }
 
@@ -2081,35 +2079,6 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
   const byId=useMemo(()=>Object.fromEntries(ko.map(m=>[m.fixture.id,m])) as Record<string,ResolvedKo>,[ko]);
-  // Column ordering, driven by who ACTUALLY advanced (ESPN's real matchups) — no group standings
-  // needed. For each round, link every fixture whose teams are known to the two previous-round
-  // fixtures its teams won; hand leftover feeders to the still-TBD boxes so the round stays a clean
-  // partition (every feeder present once). This pulls each match under its true winner's branch.
-  const {LEFT,RIGHT}=useMemo(()=>{
-    const winnerOf=(id:string)=>koWinnerCode(koResults[id]);
-    const partition=(round:string, prev:string):Record<string,string[]>=>{
-      const prevByWinner:Record<string,string>={};
-      for(const f of KO_FIXTURES) if(f.round===prev){ const w=winnerOf(f.id); if(w) prevByWinner[w]=f.id; }
-      const out:Record<string,string[]>={}; const claimed=new Set<string>(); const tbd:string[]=[];
-      for(const f of KO_FIXTURES) if(f.round===round){
-        const m=byId[f.id]; const hc=m?.home.team?.code, ac=m?.away.team?.code;
-        const hf=hc?prevByWinner[hc]:undefined, af=ac?prevByWinner[ac]:undefined;
-        if(hf&&af&&hf!==af){ out[f.id]=[hf,af]; claimed.add(hf); claimed.add(af); }
-        else tbd.push(f.id);
-      }
-      if(claimed.size===0) return {}; // nothing decided → keep the hardcoded official skeleton
-      const remaining=KO_FIXTURES.filter(f=>f.round===prev&&!claimed.has(f.id)).map(f=>f.id);
-      let i=0; for(const id of tbd){ out[id]=[remaining[i++],remaining[i++]]; }
-      return out;
-    };
-    const parts:Record<string,Record<string,string[]>>={ R16:partition("R16","R32"), QF:partition("QF","R16"), SF:partition("SF","QF") };
-    const feeders=(f:KoFixture):(KoFixture|undefined)[]=>{
-      const p=parts[f.round];
-      return (p&&p[f.id]) ? p[f.id].map(id=>id?KO_FIXTURE_BY_ID[id]:undefined) : koFeeders(f);
-    };
-    const seen=new Set<string>();
-    return { LEFT:koOrderFrom(KO_SF2,feeders,seen), RIGHT:koOrderFrom(KO_SF1,feeders,seen) };
-  },[byId,koResults]);
   const viewportRef=useRef<HTMLDivElement|null>(null);
   const contentRef=useRef<HTMLDivElement|null>(null);
   const autoSet=useRef(false);
@@ -2162,18 +2131,18 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
       <div className="wc-br2-viewport" ref={viewportRef}>
         <div className="wc-br2" ref={contentRef} data-lod={BR_DETAIL[detail]}
           style={{transform:`translate(${fit.x}px,${fit.y}px) scale(${fit.scale})`,transformOrigin:"0 0",transition:"transform .25s ease"}}>
-          {col("R32",LEFT.R32,"l","src",false)}
-          {col("R16",LEFT.R16,"l","src",true)}
-          {col("QF",LEFT.QF,"l","src",true)}
-          {col("SF",LEFT.SF,"l","single",true)}
+          {col("R32",LEFT_ORDER.R32,"l","src",false)}
+          {col("R16",LEFT_ORDER.R16,"l","src",true)}
+          {col("QF",LEFT_ORDER.QF,"l","src",true)}
+          {col("SF",LEFT_ORDER.SF,"l","single",true)}
           <div className="wc-br2-col wc-br2-c wc-br2-final">
             <div className="wc-br2-head">{KO_ROUND_LABEL.F}</div>
             <div className="wc-br2-body">{cardFor("ko-F-1")}</div>
           </div>
-          {col("SF",RIGHT.SF,"r","single",true)}
-          {col("QF",RIGHT.QF,"r","src",true)}
-          {col("R16",RIGHT.R16,"r","src",true)}
-          {col("R32",RIGHT.R32,"r","src",false)}
+          {col("SF",RIGHT_ORDER.SF,"r","single",true)}
+          {col("QF",RIGHT_ORDER.QF,"r","src",true)}
+          {col("R16",RIGHT_ORDER.R16,"r","src",true)}
+          {col("R32",RIGHT_ORDER.R32,"r","src",false)}
         </div>
         <div className="wc-br2-zoom" role="group" aria-label="Bracket detail level">
           <button type="button" className="wc-br2-zbtn" aria-label="Less detail" disabled={detail===0}
