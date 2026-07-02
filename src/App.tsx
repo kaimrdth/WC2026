@@ -984,20 +984,19 @@ const KO_BY_WINNER_SLOT:Record<string,KoFixture>=Object.fromEntries(
   KO_FIXTURES.filter(f=>KO_WINNER_PREFIX[f.round]).map(f=>[`${KO_WINNER_PREFIX[f.round]} ${f.n} Winner`,f])
 );
 const koFeeders=(f:KoFixture):(KoFixture|undefined)[]=>[KO_BY_WINNER_SLOT[f.homeSlot],KO_BY_WINNER_SLOT[f.awaySlot]];
-// In-order DFS from a root fixture → each round's fixtures top→bottom (feeders adjacent). The
-// official feeder pairs are fixed by the draw; each real match is placed into its correct slot by
-// team (see findKoFixtureForEvent), so this static skeleton lays out the whole bracket correctly.
-function koOrderFrom(root:KoFixture|undefined):Record<string,string[]>{
+const KO_SF2=KO_FIXTURES.find(f=>f.round==="SF"&&f.n===2);
+const KO_SF1=KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1);
+// In-order DFS from a root fixture → each round's fixtures top→bottom (feeders adjacent). `feeders`
+// is injectable so the bracket can link each round to the previous by who ACTUALLY advanced (from
+// ESPN's real matchups) rather than the hardcoded group-slot skeleton, which needs group standings
+// we may not have. A shared `seen` guarantees each fixture lands on exactly one side.
+function koOrderFrom(root:KoFixture|undefined, feeders:(f:KoFixture)=>(KoFixture|undefined)[]=koFeeders, seen:Set<string>=new Set()):Record<string,string[]>{
   const order:Record<string,string[]>={R32:[],R16:[],QF:[],SF:[]};
   if(!root) return order;
-  const seen=new Set<string>();
-  const visit=(f:KoFixture)=>{ if(seen.has(f.id))return; seen.add(f.id); const [h,a]=koFeeders(f); if(h)visit(h); (order[f.round] ||= []).push(f.id); if(a)visit(a); };
+  const visit=(f:KoFixture)=>{ if(seen.has(f.id))return; seen.add(f.id); const [h,a]=feeders(f); if(h)visit(h); (order[f.round] ||= []).push(f.id); if(a)visit(a); };
   visit(root);
   return order;
 }
-// The two halves of the bracket = the two semifinal sub-trees (from the official draw).
-const LEFT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===2));
-const RIGHT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1));
 const TEAM_BY_NAME:Record<string,Team>=Object.fromEntries(TEAMS.map(t=>[t.name,t]));
 
 function matchInfoFor(id:string, koResults:Record<string,KoResult>, liveByFixture:Record<string,LiveGame>):MatchInfo|null{
@@ -1072,7 +1071,11 @@ function resolveKnockout(groupResults:Record<string,ScoreResult>, koResults:Reco
     if(result) return { fixture:f, home:teamSide(result.homeCode,shortSlot(f.homeSlot)), away:teamSide(result.awayCode,shortSlot(f.awaySlot)) };
     const set=koTeams[f.id];
     if(set) return { fixture:f, home:teamSide(set.homeCode,shortSlot(f.homeSlot)), away:teamSide(set.awayCode,shortSlot(f.awaySlot)) };
-    return { fixture:f, home:resolveKoSlot(f.homeSlot,standings,koResults), away:resolveKoSlot(f.awaySlot,standings,koResults) };
+    // Only the R32 can be projected reliably (group slots). R16+ "Round of X N Winner" projections
+    // need the correct bracket placement, which itself relies on group standings we may not have —
+    // so show TBD there until ESPN sets the real matchup, rather than a wrong team.
+    if(f.round==="R32") return { fixture:f, home:resolveKoSlot(f.homeSlot,standings,koResults), away:resolveKoSlot(f.awaySlot,standings,koResults) };
+    return { fixture:f, home:teamSide(null,shortSlot(f.homeSlot)), away:teamSide(null,shortSlot(f.awaySlot)) };
   });
 }
 
@@ -2078,6 +2081,35 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
   const byId=useMemo(()=>Object.fromEntries(ko.map(m=>[m.fixture.id,m])) as Record<string,ResolvedKo>,[ko]);
+  // Column ordering, driven by who ACTUALLY advanced (ESPN's real matchups) — no group standings
+  // needed. For each round, link every fixture whose teams are known to the two previous-round
+  // fixtures its teams won; hand leftover feeders to the still-TBD boxes so the round stays a clean
+  // partition (every feeder present once). This pulls each match under its true winner's branch.
+  const {LEFT,RIGHT}=useMemo(()=>{
+    const winnerOf=(id:string)=>koWinnerCode(koResults[id]);
+    const partition=(round:string, prev:string):Record<string,string[]>=>{
+      const prevByWinner:Record<string,string>={};
+      for(const f of KO_FIXTURES) if(f.round===prev){ const w=winnerOf(f.id); if(w) prevByWinner[w]=f.id; }
+      const out:Record<string,string[]>={}; const claimed=new Set<string>(); const tbd:string[]=[];
+      for(const f of KO_FIXTURES) if(f.round===round){
+        const m=byId[f.id]; const hc=m?.home.team?.code, ac=m?.away.team?.code;
+        const hf=hc?prevByWinner[hc]:undefined, af=ac?prevByWinner[ac]:undefined;
+        if(hf&&af&&hf!==af){ out[f.id]=[hf,af]; claimed.add(hf); claimed.add(af); }
+        else tbd.push(f.id);
+      }
+      if(claimed.size===0) return {}; // nothing decided → keep the hardcoded official skeleton
+      const remaining=KO_FIXTURES.filter(f=>f.round===prev&&!claimed.has(f.id)).map(f=>f.id);
+      let i=0; for(const id of tbd){ out[id]=[remaining[i++],remaining[i++]]; }
+      return out;
+    };
+    const parts:Record<string,Record<string,string[]>>={ R16:partition("R16","R32"), QF:partition("QF","R16"), SF:partition("SF","QF") };
+    const feeders=(f:KoFixture):(KoFixture|undefined)[]=>{
+      const p=parts[f.round];
+      return (p&&p[f.id]) ? p[f.id].map(id=>id?KO_FIXTURE_BY_ID[id]:undefined) : koFeeders(f);
+    };
+    const seen=new Set<string>();
+    return { LEFT:koOrderFrom(KO_SF2,feeders,seen), RIGHT:koOrderFrom(KO_SF1,feeders,seen) };
+  },[byId,koResults]);
   const viewportRef=useRef<HTMLDivElement|null>(null);
   const contentRef=useRef<HTMLDivElement|null>(null);
   const autoSet=useRef(false);
@@ -2130,18 +2162,18 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
       <div className="wc-br2-viewport" ref={viewportRef}>
         <div className="wc-br2" ref={contentRef} data-lod={BR_DETAIL[detail]}
           style={{transform:`translate(${fit.x}px,${fit.y}px) scale(${fit.scale})`,transformOrigin:"0 0",transition:"transform .25s ease"}}>
-          {col("R32",LEFT_ORDER.R32,"l","src",false)}
-          {col("R16",LEFT_ORDER.R16,"l","src",true)}
-          {col("QF",LEFT_ORDER.QF,"l","src",true)}
-          {col("SF",LEFT_ORDER.SF,"l","single",true)}
+          {col("R32",LEFT.R32,"l","src",false)}
+          {col("R16",LEFT.R16,"l","src",true)}
+          {col("QF",LEFT.QF,"l","src",true)}
+          {col("SF",LEFT.SF,"l","single",true)}
           <div className="wc-br2-col wc-br2-c wc-br2-final">
             <div className="wc-br2-head">{KO_ROUND_LABEL.F}</div>
             <div className="wc-br2-body">{cardFor("ko-F-1")}</div>
           </div>
-          {col("SF",RIGHT_ORDER.SF,"r","single",true)}
-          {col("QF",RIGHT_ORDER.QF,"r","src",true)}
-          {col("R16",RIGHT_ORDER.R16,"r","src",true)}
-          {col("R32",RIGHT_ORDER.R32,"r","src",false)}
+          {col("SF",RIGHT.SF,"r","single",true)}
+          {col("QF",RIGHT.QF,"r","src",true)}
+          {col("R16",RIGHT.R16,"r","src",true)}
+          {col("R32",RIGHT.R32,"r","src",false)}
         </div>
         <div className="wc-br2-zoom" role="group" aria-label="Bracket detail level">
           <button type="button" className="wc-br2-zbtn" aria-label="Less detail" disabled={detail===0}
