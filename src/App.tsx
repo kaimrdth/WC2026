@@ -515,21 +515,36 @@ function findGroupFixtureForEvent(homeCode:string, awayCode:string, ev:any):Fixt
   return delta <= 24 * 60 * 60 * 1000 ? fixture : null;
 }
 
-function findKoFixtureForEvent(ev:any, used:Set<string>):KoFixture|null {
-  const t = eventTime(ev);
-  if(t==null) return null;
-  let best:KoFixture|null=null;
-  let bestDelta=Infinity;
+// Find the bracket slot whose bracket-determined participants (`expected`) match a matchup's two
+// teams. Exact when both sides are known; a one-sided match is accepted when the other slot is an
+// undetermined third-place spot. This places each real match into its true bracket position.
+function matchKoSlotByTeam(hc:string, ac:string, expected:Record<string,{home?:string;away?:string}>, used:Set<string>):KoFixture|null {
+  let exact:KoFixture|null=null, partial:KoFixture|null=null;
   for(const f of KO_FIXTURES){
     if(used.has(f.id)) continue;
-    const d=Math.abs(new Date(f.kickoff).getTime()-t);
-    if(d<bestDelta){ best=f; bestDelta=d; }
+    const e=expected[f.id]; if(!e) continue;
+    const H=e.home, A=e.away;
+    if(H&&A && ((H===hc&&A===ac)||(H===ac&&A===hc))){ exact=f; break; }
+    const oneMatch=(!!H&&(H===hc||H===ac)&&!A) || (!!A&&(A===hc||A===ac)&&!H);
+    if(oneMatch && !partial) partial=f;
   }
-  // ESPN kickoff times can drift; this still prevents random future fixtures matching.
+  return exact??partial;
+}
+
+// Place an ESPN knockout event into the correct slot by team (NOT by kickoff time — otherwise
+// matches land in whatever slot is nearest in time, scrambling which half/round they belong to).
+// Time is a last-resort fallback for anything the bracket can't yet identify.
+function findKoFixtureForEvent(ev:any, used:Set<string>, hc:string, ac:string, expected:Record<string,{home?:string;away?:string}>):KoFixture|null {
+  const byTeam=matchKoSlotByTeam(hc,ac,expected,used);
+  if(byTeam) return byTeam;
+  const t=eventTime(ev);
+  if(t==null) return null;
+  let best:KoFixture|null=null, bestDelta=Infinity;
+  for(const f of KO_FIXTURES){ if(used.has(f.id)) continue; const d=Math.abs(new Date(f.kickoff).getTime()-t); if(d<bestDelta){ best=f; bestDelta=d; } }
   return best&&bestDelta<=8*60*60*1000 ? best : null;
 }
 
-async function fetchLiveData(): Promise<LiveData> {
+async function fetchLiveData(koExpected:Record<string,{home?:string;away?:string}>={}): Promise<LiveData> {
   const resp = await fetch(ESPN_SCOREBOARD_URL);
   if (!resp.ok) throw new Error(`ESPN responded ${resp.status}`);
   const data = await resp.json();
@@ -551,7 +566,7 @@ async function fetchLiveData(): Promise<LiveData> {
     const hc = home?.team?.abbreviation, ac = away?.team?.abbreviation;
     if (!hc || !ac) continue;
     const groupFixture = findGroupFixtureForEvent(hc, ac, ev);
-    const koFixture = groupFixture ? null : findKoFixtureForEvent(ev, usedKoFixtures);
+    const koFixture = groupFixture ? null : findKoFixtureForEvent(ev, usedKoFixtures, hc, ac, koExpected);
     const fixture = groupFixture ?? koFixture;
     if (!fixture) continue;
     if (koFixture) usedKoFixtures.add(koFixture.id);
@@ -926,19 +941,19 @@ interface KoFixture { id:string; round:string; n:number; kickoff:string; venue:s
 const KO_FIXTURES: KoFixture[] = [
   { id:"ko-R32-1", round:"R32", n:1, kickoff:"2026-06-28T19:00Z", venue:"SoFi Stadium", city:"Inglewood, California", homeSlot:"Group A 2nd Place", awaySlot:"Group B 2nd Place" },
   { id:"ko-R32-2", round:"R32", n:2, kickoff:"2026-06-29T17:00Z", venue:"NRG Stadium", city:"Houston, Texas", homeSlot:"Group C Winner", awaySlot:"Group F 2nd Place" },
-  { id:"ko-R32-3", round:"R32", n:3, kickoff:"2026-06-29T20:30Z", venue:"Gillette Stadium", city:"Foxborough, Massachusetts", homeSlot:"Germany", awaySlot:"Third Place Group A/B/C/D/F" },
+  { id:"ko-R32-3", round:"R32", n:3, kickoff:"2026-06-29T20:30Z", venue:"Gillette Stadium", city:"Foxborough, Massachusetts", homeSlot:"Group E Winner", awaySlot:"Third Place Group A/B/C/D/F" },
   { id:"ko-R32-4", round:"R32", n:4, kickoff:"2026-06-30T01:00Z", venue:"Estadio BBVA", city:"Guadalupe", homeSlot:"Group F Winner", awaySlot:"Group C 2nd Place" },
   { id:"ko-R32-5", round:"R32", n:5, kickoff:"2026-06-30T17:00Z", venue:"AT&T Stadium", city:"Arlington, Texas", homeSlot:"Group E 2nd Place", awaySlot:"Group I 2nd Place" },
   { id:"ko-R32-6", round:"R32", n:6, kickoff:"2026-06-30T21:00Z", venue:"MetLife Stadium", city:"East Rutherford, New Jersey", homeSlot:"Group I Winner", awaySlot:"Third Place Group C/D/F/G/H" },
-  { id:"ko-R32-7", round:"R32", n:7, kickoff:"2026-07-01T01:00Z", venue:"Estadio Banorte", city:"Mexico City", homeSlot:"Mexico", awaySlot:"Third Place Group C/E/F/H/I" },
+  { id:"ko-R32-7", round:"R32", n:7, kickoff:"2026-07-01T01:00Z", venue:"Estadio Banorte", city:"Mexico City", homeSlot:"Group A Winner", awaySlot:"Third Place Group C/E/F/H/I" },
   { id:"ko-R32-8", round:"R32", n:8, kickoff:"2026-07-01T16:00Z", venue:"Mercedes-Benz Stadium", city:"Atlanta, Georgia", homeSlot:"Group L Winner", awaySlot:"Third Place Group E/H/I/J/K" },
   { id:"ko-R32-9", round:"R32", n:9, kickoff:"2026-07-01T20:00Z", venue:"Lumen Field", city:"Seattle, Washington", homeSlot:"Group G Winner", awaySlot:"Third Place Group A/E/H/I/J" },
-  { id:"ko-R32-10", round:"R32", n:10, kickoff:"2026-07-02T00:00Z", venue:"Levi's Stadium", city:"Santa Clara, California", homeSlot:"United States", awaySlot:"Third Place Group B/E/F/I/J" },
+  { id:"ko-R32-10", round:"R32", n:10, kickoff:"2026-07-02T00:00Z", venue:"Levi's Stadium", city:"Santa Clara, California", homeSlot:"Group D Winner", awaySlot:"Third Place Group B/E/F/I/J" },
   { id:"ko-R32-11", round:"R32", n:11, kickoff:"2026-07-02T19:00Z", venue:"SoFi Stadium", city:"Inglewood, California", homeSlot:"Group H Winner", awaySlot:"Group J 2nd Place" },
   { id:"ko-R32-12", round:"R32", n:12, kickoff:"2026-07-02T23:00Z", venue:"BMO Field", city:"Toronto", homeSlot:"Group K 2nd Place", awaySlot:"Group L 2nd Place" },
   { id:"ko-R32-13", round:"R32", n:13, kickoff:"2026-07-03T03:00Z", venue:"BC Place", city:"Vancouver", homeSlot:"Group B Winner", awaySlot:"Third Place Group E/F/G/I/J" },
   { id:"ko-R32-14", round:"R32", n:14, kickoff:"2026-07-03T18:00Z", venue:"AT&T Stadium", city:"Arlington, Texas", homeSlot:"Group D 2nd Place", awaySlot:"Group G 2nd Place" },
-  { id:"ko-R32-15", round:"R32", n:15, kickoff:"2026-07-03T22:00Z", venue:"Hard Rock Stadium", city:"Miami Gardens, Florida", homeSlot:"Argentina", awaySlot:"Group H 2nd Place" },
+  { id:"ko-R32-15", round:"R32", n:15, kickoff:"2026-07-03T22:00Z", venue:"Hard Rock Stadium", city:"Miami Gardens, Florida", homeSlot:"Group J Winner", awaySlot:"Group H 2nd Place" },
   { id:"ko-R32-16", round:"R32", n:16, kickoff:"2026-07-04T01:30Z", venue:"GEHA Field at Arrowhead Stadium", city:"Kansas City, Missouri", homeSlot:"Group K Winner", awaySlot:"Third Place Group D/E/I/J/L" },
   { id:"ko-R16-1", round:"R16", n:1, kickoff:"2026-07-04T17:00Z", venue:"NRG Stadium", city:"Houston, Texas", homeSlot:"Round of 32 1 Winner", awaySlot:"Round of 32 3 Winner" },
   { id:"ko-R16-2", round:"R16", n:2, kickoff:"2026-07-04T21:00Z", venue:"Lincoln Financial Field", city:"Philadelphia, Pennsylvania", homeSlot:"Round of 32 4 Winner", awaySlot:"Round of 32 2 Winner" },
@@ -969,18 +984,20 @@ const KO_BY_WINNER_SLOT:Record<string,KoFixture>=Object.fromEntries(
   KO_FIXTURES.filter(f=>KO_WINNER_PREFIX[f.round]).map(f=>[`${KO_WINNER_PREFIX[f.round]} ${f.n} Winner`,f])
 );
 const koFeeders=(f:KoFixture):(KoFixture|undefined)[]=>[KO_BY_WINNER_SLOT[f.homeSlot],KO_BY_WINNER_SLOT[f.awaySlot]];
-const KO_SF2=KO_FIXTURES.find(f=>f.round==="SF"&&f.n===2);
-const KO_SF1=KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1);
-// In-order DFS from a root fixture → each round's fixtures top→bottom (feeders adjacent).
-// `feeders` is injectable so the bracket can link R16→R32 by who ACTUALLY advanced (ESPN's
-// real matchups) rather than our hardcoded group-slot guesses, which reality often violates.
-function koOrderFrom(root:KoFixture|undefined, feeders:(f:KoFixture)=>(KoFixture|undefined)[]=koFeeders, seen:Set<string>=new Set()):Record<string,string[]>{
+// In-order DFS from a root fixture → each round's fixtures top→bottom (feeders adjacent). The
+// official feeder pairs are fixed by the draw; each real match is placed into its correct slot by
+// team (see findKoFixtureForEvent), so this static skeleton lays out the whole bracket correctly.
+function koOrderFrom(root:KoFixture|undefined):Record<string,string[]>{
   const order:Record<string,string[]>={R32:[],R16:[],QF:[],SF:[]};
   if(!root) return order;
-  const visit=(f:KoFixture)=>{ if(seen.has(f.id))return; seen.add(f.id); const [h,a]=feeders(f); if(h)visit(h); (order[f.round] ||= []).push(f.id); if(a)visit(a); };
+  const seen=new Set<string>();
+  const visit=(f:KoFixture)=>{ if(seen.has(f.id))return; seen.add(f.id); const [h,a]=koFeeders(f); if(h)visit(h); (order[f.round] ||= []).push(f.id); if(a)visit(a); };
   visit(root);
   return order;
 }
+// The two halves of the bracket = the two semifinal sub-trees (from the official draw).
+const LEFT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===2));
+const RIGHT_ORDER=koOrderFrom(KO_FIXTURES.find(f=>f.round==="SF"&&f.n===1));
 const TEAM_BY_NAME:Record<string,Team>=Object.fromEntries(TEAMS.map(t=>[t.name,t]));
 
 function matchInfoFor(id:string, koResults:Record<string,KoResult>, liveByFixture:Record<string,LiveGame>):MatchInfo|null{
@@ -1055,12 +1072,54 @@ function resolveKnockout(groupResults:Record<string,ScoreResult>, koResults:Reco
     if(result) return { fixture:f, home:teamSide(result.homeCode,shortSlot(f.homeSlot)), away:teamSide(result.awayCode,shortSlot(f.awaySlot)) };
     const set=koTeams[f.id];
     if(set) return { fixture:f, home:teamSide(set.homeCode,shortSlot(f.homeSlot)), away:teamSide(set.awayCode,shortSlot(f.awaySlot)) };
-    // Only project R32 from the group standings. R16+ "Round of X N Winner" projections rely on
-    // hardcoded feeder assumptions that reality often violates (they put teams in the wrong slot),
-    // so we show TBD there until ESPN sets the real matchup rather than displaying a wrong team.
-    if(f.round==="R32") return { fixture:f, home:resolveKoSlot(f.homeSlot,standings,koResults), away:resolveKoSlot(f.awaySlot,standings,koResults) };
-    return { fixture:f, home:teamSide(null,shortSlot(f.homeSlot)), away:teamSide(null,shortSlot(f.awaySlot)) };
+    return { fixture:f, home:resolveKoSlot(f.homeSlot,standings,koResults), away:resolveKoSlot(f.awaySlot,standings,koResults) };
   });
+}
+
+// Bracket-determined participants (team codes) for every KO fixture, from group standings + prior
+// KO winners. Feeds findKoFixtureForEvent so each real match is placed into its correct slot by
+// team. Undetermined sides (third-place slots, unplayed feeders) come back undefined.
+function koExpectedParticipants(groupResults:Record<string,ScoreResult>, koResults:Record<string,KoResult>):Record<string,{home?:string;away?:string}>{
+  const standings:Record<string,StandingRow[]>={};
+  for(const L of GROUP_LETTERS) standings[L]=computeStandings(L,groupResults);
+  const out:Record<string,{home?:string;away?:string}>={};
+  for(const f of KO_FIXTURES){
+    out[f.id]={ home:resolveKoSlot(f.homeSlot,standings,koResults).team?.code, away:resolveKoSlot(f.awaySlot,standings,koResults).team?.code };
+  }
+  return out;
+}
+
+// Re-key KO results/set-teams by the actual matchup so a match keyed under the wrong slot (e.g. by
+// old time-based logic, or when the slot only became identifiable later) is moved to its correct
+// bracket position. Results run multi-pass because R16+ slots resolve once their R32 winners land.
+function dedupByPair<T extends {homeCode:string;awayCode:string}>(m:Record<string,T>):[string,T][]{
+  const seen=new Set<string>(); const out:[string,T][]=[];
+  for(const [id,v] of Object.entries(m)){ if(!v?.homeCode||!v?.awayCode) continue; const pk=pairKey(v.homeCode,v.awayCode); if(seen.has(pk)) continue; seen.add(pk); out.push([id,v]); }
+  return out;
+}
+function rekeyKoResults(koResults:Record<string,KoResult>, groupResults:Record<string,ScoreResult>):Record<string,KoResult>{
+  const out:Record<string,KoResult>={}; const used=new Set<string>();
+  let remaining=dedupByPair(koResults);
+  for(let pass=0; pass<7 && remaining.length; pass++){
+    const expected=koExpectedParticipants(groupResults,out);
+    const next:[string,KoResult][]=[]; let placed=0;
+    for(const [id,r] of remaining){
+      const f=matchKoSlotByTeam(r.homeCode,r.awayCode,expected,used);
+      if(f){ out[f.id]=r; used.add(f.id); placed++; } else next.push([id,r]);
+    }
+    remaining=next; if(!placed) break;
+  }
+  // Preserve anything we couldn't place (e.g. a winner that differs from our tiebreaker) under its
+  // original key so a match is never dropped.
+  for(const [id,r] of remaining){ if(!used.has(id)){ out[id]=r; used.add(id); } }
+  return out;
+}
+function rekeyKoTeams(koTeams:Record<string,{homeCode:string;awayCode:string}>, koResults:Record<string,KoResult>, groupResults:Record<string,ScoreResult>):Record<string,{homeCode:string;awayCode:string}>{
+  const expected=koExpectedParticipants(groupResults,koResults);
+  const out:Record<string,{homeCode:string;awayCode:string}>={}; const used=new Set<string>(); const rem:[string,{homeCode:string;awayCode:string}][]=[];
+  for(const [id,t] of dedupByPair(koTeams)){ const f=matchKoSlotByTeam(t.homeCode,t.awayCode,expected,used); if(f){ out[f.id]=t; used.add(f.id); } else rem.push([id,t]); }
+  for(const [id,t] of rem){ if(!used.has(id)){ out[id]=t; used.add(id); } }
+  return out;
 }
 
 
@@ -2019,37 +2078,6 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
   detailIds:Set<string>;onOpenDetail:(id:string)=>void;onSelectTeam:(code:string)=>void;onPreviewKo:(a:string,b:string,fixture:KoFixture)=>void;
 }){
   const byId=useMemo(()=>Object.fromEntries(ko.map(m=>[m.fixture.id,m])) as Record<string,ResolvedKo>,[ko]);
-  // Column ordering. Link each R16 to the two R32 fixtures its ACTUAL teams won (ESPN's real
-  // bracket), falling back to the hardcoded group-slot feeders until every R16 is resolvable
-  // (all-or-nothing, so an R32 can't end up duplicated or dropped mid-round).
-  const {LEFT,RIGHT}=useMemo(()=>{
-    const winnerOf=(id:string)=>koWinnerCode(koResults[id]);
-    // For a round, link each fixture whose teams are KNOWN to the two previous-round fixtures its
-    // teams actually won (ESPN's real bracket), then hand leftover feeders to the still-TBD boxes
-    // so the round stays a clean partition (every feeder present once). If NO fixture in the round
-    // is decided yet, return {} so the correct hardcoded official skeleton (koFeeders) is used.
-    const partition=(round:string, prev:string):Record<string,string[]>=>{
-      const prevByWinner:Record<string,string>={};
-      for(const f of KO_FIXTURES) if(f.round===prev){ const w=winnerOf(f.id); if(w) prevByWinner[w]=f.id; }
-      const out:Record<string,string[]>={}; const claimed=new Set<string>(); const tbd:string[]=[];
-      for(const f of KO_FIXTURES) if(f.round===round){
-        const m=byId[f.id]; const hc=m?.home.team?.code, ac=m?.away.team?.code;
-        const hf=hc?prevByWinner[hc]:undefined, af=ac?prevByWinner[ac]:undefined;
-        if(hf&&af&&hf!==af){ out[f.id]=[hf,af]; claimed.add(hf); claimed.add(af); }
-        else tbd.push(f.id);
-      }
-      if(claimed.size===0) return {}; // whole round undecided → keep the hardcoded official skeleton
-      const remaining=KO_FIXTURES.filter(f=>f.round===prev&&!claimed.has(f.id)).map(f=>f.id);
-      let i=0; for(const id of tbd){ out[id]=[remaining[i++],remaining[i++]]; }
-      return out;
-    };
-    const parts:Record<string,Record<string,string[]>>={ R16:partition("R16","R32"), QF:partition("QF","R16"), SF:partition("SF","QF") };
-    const feeders=(f:KoFixture):(KoFixture|undefined)[]=>{
-      const p=parts[f.round];
-      return (p&&p[f.id]) ? p[f.id].map(id=>id?KO_FIXTURE_BY_ID[id]:undefined) : koFeeders(f);
-    };
-    return { LEFT:koOrderFrom(KO_SF2,feeders), RIGHT:koOrderFrom(KO_SF1,feeders) };
-  },[byId,koResults]);
   const viewportRef=useRef<HTMLDivElement|null>(null);
   const contentRef=useRef<HTMLDivElement|null>(null);
   const autoSet=useRef(false);
@@ -2102,18 +2130,18 @@ function KoBracket({ko,koResults,liveByFixture,detailIds,onOpenDetail,onSelectTe
       <div className="wc-br2-viewport" ref={viewportRef}>
         <div className="wc-br2" ref={contentRef} data-lod={BR_DETAIL[detail]}
           style={{transform:`translate(${fit.x}px,${fit.y}px) scale(${fit.scale})`,transformOrigin:"0 0",transition:"transform .25s ease"}}>
-          {col("R32",LEFT.R32,"l","src",false)}
-          {col("R16",LEFT.R16,"l","src",true)}
-          {col("QF",LEFT.QF,"l","src",true)}
-          {col("SF",LEFT.SF,"l","single",true)}
+          {col("R32",LEFT_ORDER.R32,"l","src",false)}
+          {col("R16",LEFT_ORDER.R16,"l","src",true)}
+          {col("QF",LEFT_ORDER.QF,"l","src",true)}
+          {col("SF",LEFT_ORDER.SF,"l","single",true)}
           <div className="wc-br2-col wc-br2-c wc-br2-final">
             <div className="wc-br2-head">{KO_ROUND_LABEL.F}</div>
             <div className="wc-br2-body">{cardFor("ko-F-1")}</div>
           </div>
-          {col("SF",RIGHT.SF,"r","single",true)}
-          {col("QF",RIGHT.QF,"r","src",true)}
-          {col("R16",RIGHT.R16,"r","src",true)}
-          {col("R32",RIGHT.R32,"r","src",false)}
+          {col("SF",RIGHT_ORDER.SF,"r","single",true)}
+          {col("QF",RIGHT_ORDER.QF,"r","src",true)}
+          {col("R16",RIGHT_ORDER.R16,"r","src",true)}
+          {col("R32",RIGHT_ORDER.R32,"r","src",false)}
         </div>
         <div className="wc-br2-zoom" role="group" aria-label="Bracket detail level">
           <button type="button" className="wc-br2-zbtn" aria-label="Less detail" disabled={detail===0}
@@ -4193,8 +4221,18 @@ export default function App() {
   // stays openable for match details even after it drops out of ESPN's scoreboard window.
   const loadStore=<T,>(k:string):T=>{ try{ return JSON.parse(localStorage.getItem(k)||"{}"); }catch{ return {} as T; } };
   const [groupResults,setGroupResults]=useState<Record<string,ScoreResult>>(()=>loadStore("wc26_results"));
-  const [koResults,setKoResults]=useState<Record<string,KoResult>>(()=>loadStore("wc26_koresults"));
-  const [koTeams,setKoTeams]=useState<Record<string,{homeCode:string;awayCode:string}>>(()=>loadStore("wc26_koteams"));
+  // Re-key persisted KO data by team on load so any match saved under a wrong slot (old time-based
+  // logic) is corrected before first paint.
+  const [koResults,setKoResults]=useState<Record<string,KoResult>>(()=>rekeyKoResults(loadStore("wc26_koresults"),loadStore("wc26_results")));
+  // Mirror results in refs so the (mount-only) polling effect can place KO events by team using
+  // the latest standings/winners rather than a stale closure snapshot.
+  const groupResultsRef=useRef(groupResults); groupResultsRef.current=groupResults;
+  const koResultsRef=useRef(koResults); koResultsRef.current=koResults;
+  const [koTeams,setKoTeams]=useState<Record<string,{homeCode:string;awayCode:string}>>(()=>{
+    const g=loadStore<Record<string,ScoreResult>>("wc26_results");
+    return rekeyKoTeams(loadStore("wc26_koteams"),rekeyKoResults(loadStore("wc26_koresults"),g),g);
+  });
+  const koTeamsRef=useRef(koTeams); koTeamsRef.current=koTeams;
   const [liveStatus,setLiveStatus]=useState<"loading"|"ok"|"error">("loading");
   // Goals & cards persisted per fixture, so a completed match's events survive even after
   // ESPN's scoreboard window scrolls past it. Each poll overwrites the entries for the
@@ -4283,14 +4321,19 @@ export default function App() {
     const run=async(initial:boolean)=>{
       if(initial||anyMatchWindowActive(Date.now())){
         try{
-          const live=await fetchLiveData();
+          const live=await fetchLiveData(koExpectedParticipants(groupResultsRef.current,koResultsRef.current));
           if(alive){
             const save=(k:string,v:unknown)=>{ try{ localStorage.setItem(k,JSON.stringify(v)); }catch{ /* quota */ } };
             // Merge (don't replace) so completed games + their event ids never get lost
             // when ESPN's response window no longer includes older fixtures.
-            setGroupResults(prev=>{ const next={...prev,...live.results}; save("wc26_results",next); return next; });
-            setKoResults(prev=>{ const next={...prev,...live.koResults}; save("wc26_koresults",next); return next; });
-            setKoTeams(prev=>{ const next={...prev,...live.koTeams}; save("wc26_koteams",next); return next; });
+            const nextGroups={...groupResultsRef.current,...live.results};
+            // Re-key the merged KO maps by team so stale wrong-slot entries (from before) get moved
+            // to their correct bracket position, not just this poll's fresh events.
+            const nextKoResults=rekeyKoResults({...koResultsRef.current,...live.koResults}, nextGroups);
+            const nextKoTeams=rekeyKoTeams({...koTeamsRef.current,...live.koTeams}, nextKoResults, nextGroups);
+            save("wc26_results",nextGroups); setGroupResults(nextGroups);
+            save("wc26_koresults",nextKoResults); setKoResults(nextKoResults);
+            save("wc26_koteams",nextKoTeams); setKoTeams(nextKoTeams);
             setLiveEventIds(prev=>{ const next={...prev,...live.eventIds}; save("wc26_eventids",next); return next; });
             // Archive this poll's completed-match events per fixture. We reset every fixture
             // seen as completed (results/koResults keys) to its authoritative set — including
